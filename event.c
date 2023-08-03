@@ -421,17 +421,19 @@ gettime(struct event_base *base, struct timeval *tp)
 {
 	EVENT_BASE_ASSERT_LOCKED(base);
 
-	if (base->tv_cache.tv_sec) {
+	if (base->tv_cache.tv_sec) 
+	{
 		*tp = base->tv_cache;
 		return (0);
 	}
 
-	if (evutil_gettime_monotonic_(&base->monotonic_timer, tp) == -1) {
+	if (evutil_gettime_monotonic_(&base->monotonic_timer, tp) == -1) 
+	{
 		return -1;
 	}
 
-	if (base->last_updated_clock_diff + CLOCK_SYNC_INTERVAL
-	    < tp->tv_sec) {
+	if (base->last_updated_clock_diff + CLOCK_SYNC_INTERVAL < tp->tv_sec) 
+	{
 		struct timeval tv;
 		evutil_gettimeofday(&tv,NULL);
 		evutil_timersub(&tv, tp, &base->tv_clock_diff);
@@ -1988,6 +1990,7 @@ event_base_loop(struct event_base *base, int flags)
 
 	clear_time_cache(base);
 
+	// 设置信号全局相关变量
 	if (base->sig.ev_signal_added && base->sig.ev_n_signals_added)
 		evsig_set_base_(base);
 
@@ -1997,10 +2000,15 @@ event_base_loop(struct event_base *base, int flags)
 	base->th_owner_id = EVTHREAD_GET_ID();
 #endif
 
+	// 重置立刻关闭标志
 	base->event_gotterm = base->event_break = 0;
 
-	while (!done) {
+	while (!done) 
+	{
+		// 该变量设置成 1,则会立刻进入到下一个 loop 中, 低优先级的队列任务可能一直得不到执行, 造成饥饿
 		base->event_continue = 0;
+
+		// 延迟队列任务数量
 		base->n_deferreds_queued = 0;
 
 		/* Terminate the loop if we have been asked to */
@@ -2013,9 +2021,15 @@ event_base_loop(struct event_base *base, int flags)
 		}
 
 		tv_p = &tv;
-		if (!N_ACTIVE_CALLBACKS(base) && !(flags & EVLOOP_NONBLOCK)) {
+
+		// 已经激活的事件数量是0并且 flags 没有 空事件就退出循环 标志, 就计算最大阻塞时间
+		if (!N_ACTIVE_CALLBACKS(base) && !(flags & EVLOOP_NONBLOCK)) 
+		{
+			// 获取最近将要发生事件的事件, 如果没有定时事件, 则 tv_p 是没有值的
 			timeout_next(base, &tv_p);
-		} else {
+		} 
+		else 
+		{
 			/*
 			 * if we have active events, we just poll new events
 			 * without waiting.
@@ -2031,6 +2045,7 @@ event_base_loop(struct event_base *base, int flags)
 			goto done;
 		}
 
+		// 将 active_later_queue 中的事件移动到 active_later_queue 队列中
 		event_queue_make_later_events_active(base);
 
 		/* Invoke prepare watchers before polling for events */

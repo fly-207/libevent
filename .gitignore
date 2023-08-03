@@ -171,3 +171,5 @@ rules.ninja
 
 # clangd
 .cache
+.vscode/
+build/
