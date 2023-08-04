@@ -71,7 +71,10 @@ enum WebSocketFrameType {
 	PONG_FRAME = 0xA
 };
 
-/*
+void evws_send_pong(
+	struct evws_connection *evws, const char *packet_str, size_t str_len);
+
+	/*
  * Clean up a WebSockets connection object
  */
 
@@ -320,6 +323,7 @@ ws_evhttp_read_cb(struct bufferevent *bufev, void *arg)
 		case PING_FRAME:
 		case PONG_FRAME:
 			/* ping or pong frame */
+			evws_send_pong(evws, NULL, 0);
 			break;
 		default:
 			event_warn("%s: unexpected frame type %d\n", __func__, type);
@@ -440,6 +444,17 @@ evws_send(struct evws_connection *evws, const char *packet_str, size_t str_len)
 	bufferevent_lock(evws->bufev);
 	output = bufferevent_get_output(evws->bufev);
 	make_ws_frame(output, TEXT_FRAME, (unsigned char *)packet_str, str_len);
+	bufferevent_unlock(evws->bufev);
+}
+
+void
+evws_send_pong(struct evws_connection *evws, const char *packet_str, size_t str_len)
+{
+	struct evbuffer *output;
+
+	bufferevent_lock(evws->bufev);
+	output = bufferevent_get_output(evws->bufev);
+	make_ws_frame(output, PONG_FRAME, (unsigned char *)packet_str, str_len);
 	bufferevent_unlock(evws->bufev);
 }
 

@@ -228,6 +228,11 @@ main(int argc, char **argv)
 	struct event *sig_int;
 	struct evhttp *http_server;
 
+#ifdef _WIN32
+	WSADATA wsa_data;
+	WSAStartup(0x0201, &wsa_data);
+#endif
+
 	TAILQ_INIT(&clients);
 
 	base = event_base_new();
