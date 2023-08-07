@@ -38,6 +38,12 @@
 
 typedef struct min_heap
 {
+	/*
+		p 是 event* 类型的数组
+		n 是数组元素个数
+		a 是数组可容纳元素个数
+	*/
+
 	struct event** p;
 	size_t n, a;
 } min_heap_t;
@@ -132,6 +138,10 @@ int min_heap_adjust_(min_heap_t *s, struct event *e)
 
 int min_heap_reserve_(min_heap_t* s, size_t n)
 {
+	/*
+		重新分配 s->p 数组
+	*/
+
 	if (s->a < n)
 	{
 		struct event** p;

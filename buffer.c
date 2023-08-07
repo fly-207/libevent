@@ -1443,6 +1443,8 @@ evbuffer_pullup(struct evbuffer *buf, ev_ssize_t size)
 	/* TODO(niels): deal with buffers that point to NULL like sendfile */
 
 	/* Copy and free every chunk that will be entirely pulled into tmp */
+	// 预期只有上面最后一个 else 中 size 还有值, 其他两个都是 0
+	// 这里的逻辑是, 将后面 chain 中不超过 size 个字节拷贝到 buff 所在链表中的位置后面, 然后释放 chain
 	last_with_data = *buf->last_with_datap;
 	for (; chain != NULL && (size_t)size >= chain->off; chain = next) {
 		next = chain->next;

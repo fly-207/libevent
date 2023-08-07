@@ -175,15 +175,18 @@ struct evbuffer_chain {
 	struct evbuffer_chain *next;
 
 	/** total allocation available in the buffer field. */
+	// 可以用来存放消息的总长度
 	size_t buffer_len;
 
 	/** unused space at the beginning of buffer or an offset into a
 	 * file for sendfile buffers. */
+	// 暂时为 0
 	ev_misalign_t misalign;
 
 	/** Offset into buffer + misalign at which to start writing.
 	 * In other words, the total number of bytes actually stored
 	 * in buffer. */
+	// 已经存储的用户数据长度
 	size_t off;
 
 	/** Set if special handling is required for this chain */
@@ -212,6 +215,7 @@ struct evbuffer_chain {
 	 * EVBUFFER_IMMUTABLE will be set in flags.  For sendfile, it
 	 * may point to NULL.
 	 */
+	// 用户数据的起始地址, 前面还有 sizeof(evbuffer_chain) 长度的地址一起申请
 	unsigned char *buffer;
 };
 
