@@ -321,6 +321,12 @@ on_sigint(evutil_socket_t sig, short events, void *arg)
 int
 main(int argc, char **argv)
 {
+
+#ifdef _WIN32
+	WSADATA wsa_data;
+	WSAStartup(0x0201, &wsa_data);
+#endif
+
 	struct timeval one_second = { 1, 0 };
 	struct event *timeout_event, *sigint_event;
 

@@ -2058,6 +2058,7 @@ event_base_loop(struct event_base *base, int flags)
 
 		clear_time_cache(base);
 
+		// 开始监听事件, 只有 read 和 write 事件
 		res = evsel->dispatch(base, tv_p);
 
 		if (res == -1) {
@@ -2077,8 +2078,10 @@ event_base_loop(struct event_base *base, int flags)
 			EVBASE_ACQUIRE_LOCK(base, th_base_lock);
 		}
 
+		// 利用堆判断超时事件
 		timeout_process(base);
 
+		// 处理 io 事件和超时事件
 		if (N_ACTIVE_CALLBACKS(base)) {
 			int n = event_process_active(base);
 			if ((flags & EVLOOP_ONCE)
