@@ -53,6 +53,16 @@ struct SocketInfo
     bufferevent* bev;
 };
 
+
+// websocket 信息
+struct WebSocketInfo
+{
+	event_base *base;
+
+	evhttp *http_server;
+};
+
+
 class CTCPServerManager
 {
 public:
@@ -68,6 +78,8 @@ public:
     bool Start();
     // 停止服务
     bool Stop();
+    //
+	void AddWebSocket(const char *ip, int port);
 
 protected:
     // SOCKET 连接应答线程
@@ -142,6 +154,10 @@ private:
 
     // 
     std::thread m_threadSendMsg;
+
+    // websocket
+	WebSocketInfo m_WebSocketInfo;
+
 };
 
 

@@ -44,6 +44,7 @@ main()
 
 	a.init(&b, 10, 39999, "0.0.0.0", 0);
 	a.Start();
+	a.AddWebSocket("0.0.0.0", 49999);
 
 	Sleep(5000000);
 

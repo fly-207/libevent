@@ -6,6 +6,8 @@
 #include <event2/event.h>
 #include <map>
 #include "event-internal.h"
+#include <event2/http.h>
+#include <event2/ws.h>
 
 static void
 time_cb(evutil_socket_t fd, short event, void *arg)
@@ -18,6 +20,19 @@ rand_int(int n)
 	return n;
 }
 
+
+#define log_d(...) fprintf(stderr, __VA_ARGS__)
+
+typedef struct client {
+	struct evws_connection *evws;
+	char name[INET6_ADDRSTRLEN];
+	TAILQ_ENTRY(client) next;
+} client_t;
+typedef struct clients_s {
+	struct client *tqh_first;
+	struct client **tqh_last;
+} clients_t;
+static clients_t clients;
 
 CTCPServerManager::CTCPServerManager(int nWorkSize)
 	: m_workBaseVec(1)
@@ -60,7 +75,7 @@ void client_read_cb(struct bufferevent* bev, void* ctx)
 	char msg[1024] = {};
 	bufferevent_read(bev, msg, sizeof(msg));
 
-	printf("ï¿½ï¿½ï¿½Õµï¿½ï¿½Í»ï¿½ï¿½ï¿½ï¿½ï¿½Ï¢=[%d:%s]\n",bufferevent_getfd(bev), msg);
+	printf("½ÓÊÕµ½¿Í»§¶ËÏûÏ¢=[%d:%s]\n",bufferevent_getfd(bev), msg);
 }
 
 void client_write_cb(struct bufferevent* bev, void* ctx)
@@ -114,10 +129,10 @@ CTCPServerManager::Start()
 {
 	INFO_LOG("service TCPSocketManage start begin...");
 
-	// ï¿½ï¿½ï¿½Õ¿Í»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ï¢, ï¿½ï¿½ï¿½ï¿½ï¿½â²¿ï¿½ï¿½ï¿½ï¿½×ªï¿½ï¿½ï¿½ï¿½Ï¢
+	// ½ÓÊÕ¿Í»§¶ËÁ¬½ÓÏûÏ¢, ²¢ÏòÍâ²¿·þÎñ×ª·¢ÏûÏ¢
 	m_threadAccept = std::thread(ThreadAccept, this);
 
-	// ï¿½ï¿½Ê¼ï¿½ï¿½ï¿½ï¿½ï¿½ß³ï¿½ï¿½ï¿½Ï¢
+	// ³õÊ¼¹¤×÷Ïß³ÌÐÅÏ¢
 	int index = 0;
 	for (auto &_item : m_workBaseVec) {
 		_item.base = event_base_new();
@@ -132,7 +147,7 @@ CTCPServerManager::Start()
 		_item.pThis = this;
 	}
 
-	// ï¿½â²¿ï¿½ï¿½ï¿½ï¿½Ð´ï¿½ï¿½Í»ï¿½ï¿½Ëµï¿½ï¿½ï¿½Ï¢ï¿½Ú´ï¿½ï¿½ß³ï¿½Ð´ï¿½ëµ½ buffer
+	// Íâ²¿·þÎñÐ´Èë¿Í»§¶ËµÄÏûÏ¢ÔÚ´ËÏß³ÌÐ´Èëµ½ buffer
 	m_threadSendMsg = std::thread(ThreadSendMsg, this);
 
 	return true;
@@ -151,6 +166,148 @@ CTCPServerManager::Stop()
 	INFO_LOG("service TCPSocketManage stop end...");
 
 	return true;
+}
+
+static void
+htt_common_cb(struct evhttp_request *req, void *arg)
+{
+	evhttp_send_error(req, 200, "ÕýÈ··µ»ØÊä³ö²âÊÔ");
+}
+
+static void
+on_close_cb(struct evws_connection *evws, void *arg)
+{
+	client_t *client = (client_t *)arg;
+	printf("'%s' disconnected\n", client->name);
+	TAILQ_REMOVE(&clients, client, next);
+	free(arg);
+}
+
+static const char *
+nice_addr(const char *addr)
+{
+	if (strncmp(addr, "::ffff:", 7) == 0)
+		addr += 7;
+
+	return addr;
+}
+
+static void
+addr2str(struct sockaddr *sa, char *addr, size_t len)
+{
+	const char *nice;
+	unsigned short port;
+	size_t adlen;
+
+	if (sa->sa_family == AF_INET) {
+		struct sockaddr_in *s = (struct sockaddr_in *)sa;
+		port = ntohs(s->sin_port);
+		evutil_inet_ntop(AF_INET, &s->sin_addr, addr, len);
+	} else { // AF_INET6
+		struct sockaddr_in6 *s = (struct sockaddr_in6 *)sa;
+		port = ntohs(s->sin6_port);
+		evutil_inet_ntop(AF_INET6, &s->sin6_addr, addr, len);
+		nice = nice_addr(addr);
+		if (nice != addr) {
+			size_t len = strlen(addr) - (nice - addr);
+			memmove(addr, nice, len);
+			addr[len] = 0;
+		}
+	}
+	adlen = strlen(addr);
+	snprintf(addr + adlen, len - adlen, ":%d", port);
+}
+
+
+static void
+broadcast_msg(char *msg)
+{
+	struct client *client;
+
+	TAILQ_FOREACH (client, &clients, next) {
+		evws_send(client->evws, msg, strlen(msg));
+	}
+	log_d("%s\n", msg);
+}
+
+static void
+on_msg_cb(struct evws_connection *evws, int type, const unsigned char *data,
+	size_t len, void *arg)
+{
+	struct client *self = (client *)arg;
+	char buf[4096];
+	const char *msg = (const char *)data;
+
+	snprintf(buf, sizeof(buf), "%.*s", (int)len, msg);
+	if (len == 5 && memcmp(buf, "/quit", 5) == 0) {
+		evws_close(evws, WS_CR_NORMAL);
+		snprintf(buf, sizeof(buf), "'%s' left the chat", self->name);
+	} else if (len > 6 && strncmp(msg, "/name ", 6) == 0) {
+		const char *new_name = (const char *)msg + 6;
+		int name_len = len - 6;
+
+		snprintf(buf, sizeof(buf), "'%s' renamed itself to '%.*s'", self->name,
+			name_len, new_name);
+		snprintf(
+			self->name, sizeof(self->name) - 1, "%.*s", name_len, new_name);
+	} else {
+		snprintf(buf, sizeof(buf), "[%s] %.*s", self->name, (int)len, msg);
+	}
+
+	broadcast_msg(buf);
+}
+
+
+static void
+on_ws(struct evhttp_request *req, void *arg)
+{
+	struct client *cli = (client *)malloc(sizeof(client));
+	evutil_socket_t fd;
+	struct sockaddr_storage addr;
+	socklen_t len;
+
+
+	cli->evws = evws_new_session(req, on_msg_cb, cli, 0);
+	if (!cli->evws) {
+		free(cli);
+		log_d("Failed to create session\n");
+		return;
+	}
+
+	fd = bufferevent_getfd(evws_connection_get_bufferevent(cli->evws));
+
+	len = sizeof(addr);
+	getpeername(fd, (struct sockaddr *)&addr, &len);
+	addr2str((struct sockaddr *)&addr, cli->name, sizeof(cli->name));
+
+	log_d("New client joined from %s\n", cli->name);
+
+	evws_connection_set_closecb(cli->evws, on_close_cb, cli);
+
+	do {
+		(cli)->next.tqe_next = 0;
+		(cli)->next.tqe_prev = (&clients)->tqh_last;
+		*(&clients)->tqh_last = (cli);
+		(&clients)->tqh_last = &(cli)->next.tqe_next;
+	} while (0);
+}
+
+void
+CTCPServerManager::AddWebSocket(const char *ip, int port)
+{
+	m_WebSocketInfo.base = event_base_new();
+	m_WebSocketInfo.http_server = evhttp_new(m_WebSocketInfo.base);
+	evhttp_bind_socket_with_handle(m_WebSocketInfo.http_server, ip, port);
+
+	evhttp_set_cb(m_WebSocketInfo.http_server, "/", htt_common_cb, NULL);
+	evhttp_set_cb(m_WebSocketInfo.http_server, "/ws", on_ws, NULL);
+
+	do {
+		(&clients)->tqh_first = 0;
+		(&clients)->tqh_last = &(&clients)->tqh_first;
+	} while (0);
+
+	event_base_dispatch(m_WebSocketInfo.base);
 }
 
 void
@@ -173,7 +330,7 @@ CTCPServerManager::ThreadAccept(CTCPServerManager *pThis)
 		evtimer_add(v, &tv);
 	}
 
-	// ï¿½ï¿½Ê¼ï¿½ï¿½ï¿½ï¿½
+	// ¿ªÊ¼¼àÌý
 	sockaddr_in sin = {};
 	sin.sin_family = AF_INET;
 	sin.sin_port = htons(pThis->m_port);
@@ -186,14 +343,14 @@ CTCPServerManager::ThreadAccept(CTCPServerManager *pThis)
 		(struct sockaddr *)&sin, sizeof(sin));
 
 	if (!pThis->m_listenThreadInfo.listener) {
-		printf("Could not create a listener! ï¿½ï¿½ï¿½Ô»ï¿½ï¿½ï¿½ï¿½Ë¿Ú»ï¿½ï¿½ï¿½ï¿½Ôµï¿½Ò»ï¿½á¡£");
+		printf("Could not create a listener! ³¢ÊÔ»»¸ö¶Ë¿Ú»òÕßÉÔµÈÒ»»á¡£");
 		exit(1);
 	}
 
 	evconnlistener_set_error_cb(
 		pThis->m_listenThreadInfo.listener, AcceptErrorCB);
 
-	// ï¿½ï¿½Ê¼ï¿½ï¿½ï¿½ï¿½
+	// ¿ªÊ¼¼àÌý
 	event_base_dispatch(pThis->m_listenThreadInfo.base);
 
 	evconnlistener_free(pThis->m_listenThreadInfo.listener);
@@ -206,7 +363,7 @@ CTCPServerManager::ThreadAccept(CTCPServerManager *pThis)
 void
 CTCPServerManager::ThreadRSSocket(WorkThreadInfo *pThreadData)
 {
-	// ï¿½ï¿½ï¿½Ú¼ï¿½ï¿½ï¿½×´Ì¬
+	// ´¦ÓÚ¼àÌý×´Ì¬
 	 event_base_loop(pThreadData->base, EVLOOP_NO_EXIT_ON_EMPTY);
 	//event_base_dispatch(pThreadData->base);
 
@@ -235,7 +392,7 @@ CTCPServerManager::ListenerCB(struct evconnlistener *listener,
 		int ret = getsockname(
 			fd, (struct sockaddr *)&connectedAddr, &connectedAddrLen);
 		if (ret != 0) {
-			perror("ï¿½ï¿½È¡ï¿½ï¿½ï¿½Øµï¿½Ö·ï¿½ï¿½ï¿½ï¿½");
+			perror("»ñÈ¡±¾µØµØÖ·´íÎó");
 		} else {
 			printf("connected address = %s:%d\n",
 				inet_ntoa(connectedAddr.sin_addr),
@@ -244,25 +401,25 @@ CTCPServerManager::ListenerCB(struct evconnlistener *listener,
 
 		ret = getpeername(fd, (struct sockaddr *)&peerAddr, &peerLen);
 		if (ret != 0) {
-			perror("ï¿½ï¿½È¡ï¿½Ô¶ï¿½Ö·ï¿½ï¿½ï¿½ï¿½");
+			perror("»ñÈ¡¶Ô¶ËÖ·´íÎó");
 		} else {
 			printf("peerAddr address = %s:%d\n", inet_ntoa(peerAddr.sin_addr),
 				ntohs(peerAddr.sin_port));
 		}
 	}
 
-	// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ð¶ï¿½
+	// ×î´óÁ¬½ÓÊýÅÐ¶Ï
 	if (pThis->GetCurSocketSize() >= pThis->m_uMaxSocketSize) {
-		ERROR_LOG("ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ñ¾ï¿½ï¿½ï¿½ï¿½ï¿½fd=%Id [%s][ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½%u/%u]", fd,
+		ERROR_LOG("·þÎñÆ÷ÒÑ¾­Âú£ºfd=%Id [%s][ÈËÊý£º%u/%u]", fd,
 			CTCPServerManager::GetSocketNameIpAndPort(fd).c_str(),
 			pThis->GetCurSocketSize(), pThis->m_uMaxSocketSize);
 
-		// ï¿½ï¿½ï¿½ï¿½Ê§ï¿½ï¿½
+		// ·ÖÅäÊ§°Ü
 		NetMessageHead netHead = {};
 		netHead.uMessageSize = sizeof(NetMessageHead);
 		netHead.uMainID = 100;
 		netHead.uAssistantID = 3;
-		netHead.uHandleCode = 15; // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+		netHead.uHandleCode = 15; // ·þÎñÆ÷ÈËÊýÒÑÂú
 
 		send(fd, (char *)&netHead, sizeof(NetMessageHead), 0);
 
@@ -275,7 +432,7 @@ CTCPServerManager::ListenerCB(struct evconnlistener *listener,
 	static int lastThreadIndex = 0;
 	lastThreadIndex = lastThreadIndex % pThis->m_workBaseVec.size();
 
-	// Í¶ï¿½Ýµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ß³ï¿½
+	// Í¶µÝµ½½ÓÊÕÏß³Ì
 	do {
 		std::lock_guard<std::mutex> lck(pThis->m_workBaseVec[lastThreadIndex].mtx);
 		pThis->m_workBaseVec[lastThreadIndex].vecFd.push_back(fd);
@@ -292,7 +449,7 @@ CTCPServerManager::ReadCB(struct bufferevent *bev, void *data)
 	WorkThreadInfo *pWorkInfo = (WorkThreadInfo *)data;
 	CTCPServerManager *pThis = pWorkInfo->pThis;
 
-	// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ý£ï¿½ï¿½ï¿½Í·ï¿½ï¿½ï¿½ï¿½
+	// ´¦ÀíÊý¾Ý£¬°üÍ·½âÎö
 	pThis->RecvData(bev);
 }
 
@@ -311,7 +468,7 @@ CTCPServerManager::ThreadLibeventProcess(
 	evutil_socket_t readfd, short which, void *arg)
 {
 	/*
-		ï¿½Ãºï¿½ï¿½ï¿½ï¿½á±»ï¿½ï¿½ï¿½ï¿½ß³ï¿½Ö´ï¿½ï¿½
+		¸Ãº¯Êý»á±»¶à¸öÏß³ÌÖ´ÐÐ
 	*/
 
 	WorkThreadInfo *workInfo = (WorkThreadInfo *)arg;
@@ -325,7 +482,7 @@ CTCPServerManager::ThreadLibeventProcess(
 	} while (false);
 
 	for (auto fd : vecFd) {
-		// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+		// ´¦ÀíÁ¬½Ó
 		workInfo->pThis->AddTCPSocketInfo(fd, workInfo);
 	}
 }
@@ -340,7 +497,7 @@ void
 CTCPServerManager::AddTCPSocketInfo(int fd, WorkThreadInfo *workInfo)
 {
 	/*
-		ï¿½Ãºï¿½ï¿½ï¿½ï¿½á±»ï¿½ï¿½ï¿½ï¿½ß³ï¿½Ö´ï¿½ï¿½
+		¸Ãº¯Êý»á±»¶à¸öÏß³ÌÖ´ÐÐ
 	*/
 	struct event_base *base = workInfo->base;
 
@@ -354,7 +511,7 @@ CTCPServerManager::AddTCPSocketInfo(int fd, WorkThreadInfo *workInfo)
 		return;
 	}
 
-	// ï¿½ï¿½ï¿½ï¿½ï¿½Â¼ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ÃºÃ»Øµï¿½ï¿½ï¿½ï¿½ï¿½
+	// Ìí¼ÓÊÂ¼þ£¬²¢ÉèÖÃºÃ»Øµ÷º¯Êý
 	bufferevent_setcb(bev, ReadCB, NULL, EventCB, (void *)workInfo);
 	if (bufferevent_enable(bev, EV_READ | EV_ET) < 0) {
 		ERROR_LOG("add event fail!!!,fd=%d,ip=%s", fd,
@@ -364,13 +521,13 @@ CTCPServerManager::AddTCPSocketInfo(int fd, WorkThreadInfo *workInfo)
 		return;
 	}
 
-	// ï¿½ï¿½ï¿½Ã¶ï¿½ï¿½ï¿½Ê±, ï¿½ï¿½Ê¹ï¿½ï¿½ï¿½Ú²ï¿½ï¿½ï¿½ï¿½ï¿½Ò²ï¿½ï¿½Òªï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ð¶ï¿½ï¿½Ç·ñ»¹´ï¿½ï¿½(ï¿½ï¿½ï¿½ï¿½Ã»ï¿½Ð¿ï¿½ï¿½ï¿½)
+	// ÉèÖÃ¶Á³¬Ê±, ¼´Ê¹ÊÇÄÚ²¿Á¬½ÓÒ²ÐèÒªÐÄÌøÀ´ÅÐ¶ÏÊÇ·ñ»¹´æ»î(½ø³ÌÃ»ÓÐ¿¨ËÀ)
 	timeval tvRead;
 	tvRead.tv_sec = 15 * 3;
 	tvRead.tv_usec = 0;
 	bufferevent_set_timeouts(bev, &tvRead, NULL);
 
-	// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ï¢
+	// ±£´æÐÅÏ¢
 	{
 		SocketInfo sock_info;
 		sock_info.bev = bev;
@@ -396,37 +553,37 @@ CTCPServerManager::RecvData(bufferevent *bev)
 
 	// struct evbuffer* input = bufferevent_get_input(bev);
 
-	//// ï¿½ï¿½Ç°ï¿½ï¿½È¡Î»ï¿½ï¿½, ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ò»ï¿½ï¿½ï¿½Ô¸ï¿½ï¿½ï¿½
+	//// µ±Ç°¶ÁÈ¡Î»ÖÃ, ·½±ãºóÃæÒ»´ÎÐÔ¸üÐÂ
 	// evbuffer_ptr buff_ptr = {};
 
-	//// ï¿½Üµï¿½ï¿½Ö½ï¿½ï¿½ï¿½
+	//// ×ÜµÄ×Ö½ÚÊý
 	// size_t nAllSize = evbuffer_get_length(input);
 
 	// char buff[MAX_PACKAGE_SIZE] = {};
 
 	// while (true)
 	//{
-	//     // Ê£ï¿½ï¿½ï¿½Ö½ï¿½Ð¡ï¿½Ú°ï¿½Í·
+	//     // Ê£Óà×Ö½ÚÐ¡ÓÚ°üÍ·
 	//     if (nAllSize- buff_ptr.pos < sizeof(NetMessageHead))
 	//         break;
 
-	//    // ï¿½ï¿½Ï¢Í·
+	//    // ÏûÏ¢Í·
 	//    NetMessageHead tmpHead = {};
 
-	//    // ï¿½È¶ï¿½È¡ï¿½ï¿½Ï¢Í·
+	//    // ÏÈ¶ÁÈ¡ÏûÏ¢Í·
 	//    size_t head_size = evbuffer_copyout_from(input, &buff_ptr, &tmpHead,
 	//    sizeof(NetMessageHead)); if (head_size <= sizeof(NetMessageHead))
 	//        break;
 
 
-	//    // ï¿½ï¿½ï¿½å³¬ï¿½ï¿½ï¿½ï¿½ó³¤¶ï¿½ï¿½ï¿½ï¿½ï¿½
+	//    // °üÌå³¬¹ý×î´ó³¤¶ÈÏÞÖÆ
 	//    if (tmpHead.uMessageSize > MAX_PACKAGE_SIZE)
 	//    {
 	//        CloseSocket(bev);
 	//        return false;
 	//    }
 
-	//    // ï¿½ï¿½ï¿½ï¿½Î´ï¿½ï¿½È«ï¿½ï¿½ï¿½ï¿½
+	//    // °üÌåÎ´ÍêÈ«½ÓÊÕ
 	//    if(nAllSize-buff_ptr.pos-sizeof(NetMessageHead) <
 	//    tmpHead.uMessageSize)
 	//        break;
@@ -435,44 +592,44 @@ CTCPServerManager::RecvData(bufferevent *bev)
 	//    _tmp_ptr.pos = sizeof(NetMessageHead) + buff_ptr.pos;
 
 
-	//    // ï¿½ï¿½È¡ï¿½ï¿½ï¿½ï¿½
+	//    // ¶ÁÈ¡°üÌå
 	//    size_t body_size = evbuffer_copyout_from(input, &_tmp_ptr, &buff,
 	//    tmpHead.uMessageSize); if (body_size <= tmpHead.uMessageSize)
 	//        break;
 
 
-	//    // Õ³ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+	//    // Õ³°ü´¦Àí
 	//    while (handleRemainSize >= sizeof(NetMessageHead) && handleRemainSize
 	//    >= pNetHead->uMessageSize)
 	//    {
 	//        unsigned int messageSize = pNetHead->uMessageSize;
 	//        if (messageSize > MAX_TEMP_SENDBUF_SIZE)
 	//        {
-	//            // ï¿½ï¿½Ï¢ï¿½ï¿½Ê½ï¿½ï¿½ï¿½ï¿½È·
+	//            // ÏûÏ¢¸ñÊ½²»ÕýÈ·
 	//            CloseSocket(index);
 	//            ERROR_LOG("close socket
-	//            ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Öµ,index=%d,messageSize=%u", index,
+	//            ³¬¹ýµ¥°üÊý¾Ý×î´óÖµ,index=%d,messageSize=%u", index,
 	//            messageSize); return false;
 	//        }
 
 	//        int realSize = messageSize - sizeof(NetMessageHead);
 	//        if (realSize < 0)
 	//        {
-	//            // ï¿½ï¿½ï¿½Ý°ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í·
+	//            // Êý¾Ý°ü²»¹»°üÍ·
 	//            CloseSocket(index);
-	//            ERROR_LOG("close socket ï¿½ï¿½ï¿½Ý°ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í·");
+	//            ERROR_LOG("close socket Êý¾Ý°ü²»¹»°üÍ·");
 	//            return false;
 	//        }
 
 	//        void* pData = NULL;
 	//        if (realSize > 0)
 	//        {
-	//            // Ã»ï¿½ï¿½ï¿½Ý¾ï¿½ÎªNULL
+	//            // Ã»Êý¾Ý¾ÍÎªNULL
 	//            pData = (void*)(buf + realAllSize - handleRemainSize +
 	//            sizeof(NetMessageHead));
 	//        }
 
-	//        // ï¿½É·ï¿½ï¿½ï¿½ï¿½ï¿½
+	//        // ÅÉ·¢Êý¾Ý
 	//        DispatchPacket(bev, index, pNetHead, pData, realSize);
 
 	//        handleRemainSize -= messageSize;
@@ -538,7 +695,7 @@ CTCPServerManager::CloseSocket(bufferevent *bev)
 	bufferevent_free(bev);
 
 
-	// ï¿½Øµï¿½Òµï¿½ï¿½ï¿½
+	// »Øµ÷ÒµÎñ²ã
 	if (m_pService) {
 		m_pService->OnSocketCloseEvent(m_nSocketType, fd);
 	}
