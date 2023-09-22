@@ -38,7 +38,7 @@ struct WorkThreadInfo
 {
     std::thread thread;
     struct event_base* base;
-	struct event *accept_notify[2];
+	struct event *event_notify;
 
     CTCPServerManager* pThis;
 
