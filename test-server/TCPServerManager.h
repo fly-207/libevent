@@ -19,21 +19,15 @@ struct bufferevent;
 const int MAX_PACKAGE_SIZE = 1024 * 8;
 
 
-
 struct event_base;
 struct event;
 struct evconnlistener;
 class CTCPServerManager;
 
+typedef void (*http_path_cb)(struct evhttp_request *, void *);
 
-//
-struct ListenThreadInfo
-{
-    event_base* base;
-    evconnlistener* listener;
-};
 
-// ¹¤×÷Ïß³ÌĞÅÏ¢
+// å·¥ä½œçº¿ç¨‹ä¿¡æ¯
 struct WorkThreadInfo
 {
     std::thread thread;
@@ -46,118 +40,111 @@ struct WorkThreadInfo
     std::vector<int> vecFd;
 };
 
-// TCPĞÅÏ¢
-struct SocketInfo
+// TCPä¿¡æ¯
+struct TcpSocketInfo
 {
-    int last_msg_time;
-    bufferevent* bev;
+	char bind_addr[32];
+	int bind_port;
+	int max_connect;
+	int socket_type;
+
+	evconnlistener *listener;
+	int connect_count;
 };
 
 
-// websocket ĞÅÏ¢
-struct WebSocketInfo
-{
-	event_base *base;
+// websocket ä¿¡æ¯
+struct WebSocketInfo {
+	char bind_addr[32];
+	int bind_port;
+	int max_connect;
 
-	evhttp *http_server;
+	std::unordered_map<std::string, http_path_cb> path_cb;
+
+    evhttp* http;
+	int connect_count;
 };
-
 
 class CTCPServerManager
 {
 public:
     //
-    CTCPServerManager(int nWorkSize);
-    //
+	CTCPServerManager(int nWorkSize);
+	//
     ~CTCPServerManager();
 
 public:
-    // ³õÊ¼»¯
-    bool init(IServerSocketHander* pService, int maxCount, int port, const char* ip, int socketType);
-    // ¿ªÊ¼·şÎñ
+	// æ·»åŠ ç›‘å¬ä¿¡æ¯
+	int AddTcpListenInfo(int maxCount, const char *ip, int port, int socketType);
+	// æ·»åŠ ç›‘å¬ä¿¡æ¯
+	int AddWebSocket(const char *ip, int port, const std::unordered_map<std::string, http_path_cb>& path_cb);
+    // å¼€å§‹æœåŠ¡
     bool Start();
-    // Í£Ö¹·şÎñ
+    // åœæ­¢æœåŠ¡
     bool Stop();
-    //
-	void AddWebSocket(const char *ip, int port);
+
+private:
+    void StartWorker();
+
 
 protected:
-    // SOCKET Á¬½ÓÓ¦´ğÏß³Ì
+    // SOCKET è¿æ¥åº”ç­”çº¿ç¨‹
     static void ThreadAccept(CTCPServerManager* pThreadData);
-    // SOCKET Êı¾İ½ÓÊÕÏß³Ì
+    // SOCKET æ•°æ®æ¥æ”¶çº¿ç¨‹
     static void ThreadRSSocket(WorkThreadInfo* pThreadData);
-    // Íâ²¿ĞèÒª·¢ËÍµÄÏûÏ¢, ÓÉ´ËÏß³ÌĞ´Èë buff
+    // å¤–éƒ¨éœ€è¦å‘é€çš„æ¶ˆæ¯, ç”±æ­¤çº¿ç¨‹å†™å…¥ buff
     static void ThreadSendMsg(CTCPServerManager* pThreadData);
 
 protected:
-    // ĞÂµÄÁ¬½Óµ½À´£¬ThreadAcceptÏß³Ìº¯Êı
-    static void ListenerCB(struct evconnlistener* listener, evutil_socket_t fd, struct sockaddr* sa, int socklen, void* user_data);
-    // ĞÂµÄÊı¾İµ½À´£¬ThreadRSSocketÏß³Ìº¯Êı
+    // æ–°çš„è¿æ¥åˆ°æ¥ï¼ŒThreadAcceptçº¿ç¨‹å‡½æ•°
+    static void TcpListenCB(struct evconnlistener* listener, evutil_socket_t fd, struct sockaddr* sa, int socklen, void* user_data);
+    // æ–°çš„æ•°æ®åˆ°æ¥ï¼ŒThreadRSSocketçº¿ç¨‹å‡½æ•°
     static void ReadCB(struct bufferevent*, void*);
-    // Á¬½Ó¹Ø±ÕµÈµÈ´íÎóÏûÏ¢£¬ThreadRSSocketÏß³Ìº¯Êı
+    // è¿æ¥å…³é—­ç­‰ç­‰é”™è¯¯æ¶ˆæ¯ï¼ŒThreadRSSocketçº¿ç¨‹å‡½æ•°
     static void EventCB(struct bufferevent*, short, void*);
-    // acceptÊ§°Ü£¬ThreadAcceptÏß³Ìº¯Êı
+    // acceptå¤±è´¥ï¼ŒThreadAcceptçº¿ç¨‹å‡½æ•°
     static void AcceptErrorCB(struct evconnlistener* listener, void*);
-    // ĞÂµÄÁ¬½Óµ½À´£¬ThreadRSSocketÏß³Ìº¯Êı
+    // æ–°çš„è¿æ¥åˆ°æ¥ï¼ŒThreadRSSocketçº¿ç¨‹å‡½æ•°
     static void ThreadLibeventProcess(evutil_socket_t readfd, short which, void* arg);
 
 private:
-    // »ñÈ¡µ±Ç°socketÁ¬½Ó×ÜÊı
+    // è·å–å½“å‰socketè¿æ¥æ€»æ•°
     int GetCurSocketSize() const;
-    // Ìí¼ÓTCPSocketInfo
+    // æ·»åŠ TCPSocketInfo
     void AddTCPSocketInfo(int fd, WorkThreadInfo* workInfo);
-    // ×îµ×²ã´¦ÀíÊÕµ½µÄÊı¾İº¯Êı
+    // æœ€åº•å±‚å¤„ç†æ”¶åˆ°çš„æ•°æ®å‡½æ•°
     bool RecvData(bufferevent* bev);
-    // ¹Ø±Õsocket
+    // å…³é—­socket
     bool CloseSocket(bufferevent* bev);
 
 private:
-    // ·µ»Ø socket ±¾µØµÄ xx.xx.xx.xx:xxxx ĞÎÊ½µÄ×Ö·û´®´®
+    // è¿”å› socket æœ¬åœ°çš„ xx.xx.xx.xx:xxxx å½¢å¼çš„å­—ç¬¦ä¸²ä¸²
     static std::string GetSocketNameIpAndPort(int fd);
-    // ·µ»Ø socket ¶Ô¶ËµÄ xx.xx.xx.xx:xxxx ĞÎÊ½µÄ×Ö·û´®´®
+    // è¿”å› socket å¯¹ç«¯çš„ xx.xx.xx.xx:xxxx å½¢å¼çš„å­—ç¬¦ä¸²ä¸²
     static std::string GetSocketPeerIpAndPort(int fd);
 
 private:
-    // ´¦Àí socket ÊÂ¼ş
-    IServerSocketHander* m_pService;
 
-    // ×î´ó³É¹¦½¨Á¢Á¬½ÓÊı
-    int m_uMaxSocketSize;
+    int m_nWorkCount;
 
-    // µ±Ç°ÒÑ¾­½¨Á¢ accept ÊıÁ¿
-    std::mutex m_mtxSocketSize;
-    int m_uCurSocketSize;
+    event_base* m_LibeventListenBase;
 
-    // bind ip
-    char m_bindIP[48];
-
-    // bind port
-    int m_port;
-
-    // ½¨Á¢ listen µÄ·şÎñÀàĞÍ, Ò»¸ö½ø³Ì¿ÉÄÜÓĞ¶à¸ö listen ·şÎñ
-    char m_nSocketType;
-
-    // ¹¤×÷Ïß³ÌĞÅÏ¢
-    std::vector<WorkThreadInfo> m_workBaseVec;
-
-    // Íâ²¿Ö»ÓÃ fd ºÍ CTCPServerManager ½»»¥, ÕâÀïĞèÒªÒ»¸ö fd ÄÜÕÒµ½¶ÔÓ¦Á¬½ÓĞÅÏ¢µÄ½á¹¹
-    std::unordered_map<int, SocketInfo> m_mapFd2SocketInfo;
-
-    // m_mapFd2SocketInfo ÔÚ¼àÌıÏß³Ì»á¸ü¸Ä, ÔÚ sendMsg ÖĞ¿ÉÄÜ»á¹Ø±ÕÁ¬½ÓÊ±¸ü¸Ä
+    // m_mapFd2SocketInfo åœ¨ç›‘å¬çº¿ç¨‹ä¼šæ›´æ”¹, åœ¨ sendMsg ä¸­å¯èƒ½ä¼šå…³é—­è¿æ¥æ—¶æ›´æ”¹
     std::mutex m_mtxFd2SocketInfo;
 
-    // ¼àÌıÏà¹Ø¼ÇÂ¼, base Ö®ÀàµÄĞÅÏ¢¿ÉÒÔÍ¨¹ı½Ó¿Ú»ñÈ¡
-    ListenThreadInfo m_listenThreadInfo;
-
-    // accept Ïß³ÌĞÅÏ¢
+    // accept çº¿ç¨‹ä¿¡æ¯
     std::thread m_threadAccept;
 
     // 
     std::thread m_threadSendMsg;
 
-    // websocket
-	WebSocketInfo m_WebSocketInfo;
+	// æ³¨å†Œçš„ tcp ç›‘å¬ä¿¡æ¯
+	std::vector<TcpSocketInfo> m_vecTcpSocketInfo;
 
+    // æ³¨å†Œçš„ web socket ä¿¡æ¯
+	std::vector<WebSocketInfo> m_vecWebSocketInfo;
+	// å·¥ä½œçº¿ç¨‹ä¿¡æ¯
+	std::vector<WorkThreadInfo> m_workBaseVec;
 };
 
 
