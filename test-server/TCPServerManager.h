@@ -12,7 +12,7 @@
 #include <mutex>
 #include <string>
 #include "evconfig-private.h"
-
+#include <map>
 struct bufferevent;
 
 
@@ -27,17 +27,26 @@ class CTCPServerManager;
 typedef void (*http_path_cb)(struct evhttp_request *, void *);
 
 
+//
+struct HttpPathCallBack
+{
+    std::string path;
+    http_path_cb cb;
+    void* args;
+};
+
 // 工作线程信息
 struct WorkThreadInfo
 {
-    std::thread thread;
+    std::unique_ptr< std::thread> thread;
     struct event_base* base;
 	struct event *event_notify;
 
     CTCPServerManager* pThis;
 
-    std::mutex mtx;
+    std::shared_ptr<std::mutex> mtx;
     std::vector<int> vecFd;
+
 };
 
 // TCP信息
@@ -47,9 +56,12 @@ struct TcpSocketInfo
 	int bind_port;
 	int max_connect;
 	int socket_type;
+    CTCPServerManager* pThis;
 
 	evconnlistener *listener;
 	int connect_count;
+
+    std::map<int, bufferevent*> connectd_info;
 };
 
 
@@ -59,7 +71,8 @@ struct WebSocketInfo {
 	int bind_port;
 	int max_connect;
 
-	std::unordered_map<std::string, http_path_cb> path_cb;
+    CTCPServerManager* pThis;
+	std::vector<HttpPathCallBack> path_cb;
 
     evhttp* http;
 	int connect_count;
@@ -77,7 +90,7 @@ public:
 	// 添加监听信息
 	int AddTcpListenInfo(int maxCount, const char *ip, int port, int socketType);
 	// 添加监听信息
-	int AddWebSocket(const char *ip, int port, const std::unordered_map<std::string, http_path_cb>& path_cb);
+	int AddWebSocket(const char *ip, int port, const std::vector<HttpPathCallBack>& path_cb);
     // 开始服务
     bool Start();
     // 停止服务
@@ -104,14 +117,8 @@ protected:
     static void EventCB(struct bufferevent*, short, void*);
     // accept失败，ThreadAccept线程函数
     static void AcceptErrorCB(struct evconnlistener* listener, void*);
-    // 新的连接到来，ThreadRSSocket线程函数
-    static void ThreadLibeventProcess(evutil_socket_t readfd, short which, void* arg);
 
 private:
-    // 获取当前socket连接总数
-    int GetCurSocketSize() const;
-    // 添加TCPSocketInfo
-    void AddTCPSocketInfo(int fd, WorkThreadInfo* workInfo);
     // 最底层处理收到的数据函数
     bool RecvData(bufferevent* bev);
     // 关闭socket
@@ -125,7 +132,7 @@ private:
 
 private:
 
-    int m_nWorkCount;
+    const int m_nWorkCount;
 
     event_base* m_LibeventListenBase;
 

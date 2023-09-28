@@ -5,6 +5,7 @@
 #ifdef _WIN32
 #include <event2/thread.h>
 #endif /* _WIN32 */
+#include <event2/http.h>
 
 // 服务器网络服务接口
 class ServerSocketHander : public IServerSocketHander {
@@ -26,6 +27,18 @@ public:
 	}
 };
 
+void cb1(struct evhttp_request* req, void*)
+{
+	evhttp_send_error(req, 0, "cb1");
+}
+
+
+void cb2(struct evhttp_request* req, void*)
+{
+    evhttp_send_error(req, 0, "cb2");
+}
+
+
 int
 main()
 {
@@ -42,9 +55,14 @@ main()
 
 	ServerSocketHander b;
 
-	a.init(&b, 10, 39999, "0.0.0.0", 0);
+    a.AddTcpListenInfo(10, "0.0.0.0", 49999, 1);
+    a.AddTcpListenInfo(10, "0.0.0.0", 50000, 2);
+
+	HttpPathCallBack c1 = { "cb1", cb1, 0 };
+    HttpPathCallBack c2 = { "cb2", cb2, 0 };
+	a.AddWebSocket("0.0.0.0", 50001, {c1 ,c2});
+
 	a.Start();
-	//a.AddWebSocket("0.0.0.0", 49999);
 
 	Sleep(5000000);
 

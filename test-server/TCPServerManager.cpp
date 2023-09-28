@@ -55,6 +55,7 @@ CTCPServerManager::AddTcpListenInfo(
 	tmp.bind_port = port;
 	tmp.max_connect = maxCount;
 	tmp.socket_type = socketType;
+	tmp.pThis = this;
 
 	m_vecTcpSocketInfo.emplace_back(std::move(tmp));
 
@@ -66,7 +67,7 @@ void client_read_cb(struct bufferevent* bev, void* ctx)
 	char msg[1024] = {};
 	bufferevent_read(bev, msg, sizeof(msg));
 
-	printf("接收到客户端消息=[%d:%s]\n",bufferevent_getfd(bev), msg);
+	printf("client msg=[%d:%d:%s]\n",   std::this_thread::get_id(),bufferevent_getfd(bev), msg);
 }
 
 void client_write_cb(struct bufferevent* bev, void* ctx)
@@ -95,7 +96,7 @@ callback3(evutil_socket_t , short, void *arg)
 
 	std::vector<int> vecFd;
 	do {
-		std::lock_guard<std::mutex> lck(pthread_info->mtx);
+		//std::lock_guard<std::mutex> lck(pthread_info->mtx);
 		vecFd = pthread_info->vecFd;
 		pthread_info->vecFd.clear();
 	} while (false);
@@ -141,20 +142,22 @@ CTCPServerManager::Stop()
 
 void CTCPServerManager::StartWorker()
 {
+	m_workBaseVec.resize(m_nWorkCount);
+
     // 初始工作线程信息
-    int index = 0;
-    for (auto& _item : m_workBaseVec) {
-        _item.base = event_base_new();
+	for (int i = 0; i != m_workBaseVec.size(); i++)
+	{
+		WorkThreadInfo &_item = m_workBaseVec[i];
+		_item.base = event_base_new();
         if (!_item.base) {
             CON_ERROR_LOG("TCP Could not initialize libevent!");
             exit(1);
         }
-
+		_item.pThis = this;
         _item.event_notify = evuser_new(_item.base, callback3, &_item);
-
-        _item.thread = std::thread(ThreadRSSocket, &_item);
-        _item.pThis = this;
-    }
+        _item.mtx = std::make_unique<std::mutex>();
+		_item.thread = std::make_unique<std::thread>(std::thread(ThreadRSSocket, &_item));
+	}
 }
 
 static void
@@ -284,15 +287,17 @@ on_ws(struct evhttp_request *req, void *arg)
 
 int
 CTCPServerManager::AddWebSocket(const char *ip, int port,
-	const std::unordered_map<std::string, http_path_cb> &path_cb)
+	const std::vector<HttpPathCallBack> &path_cb)
 {
 	WebSocketInfo tmp = {};
 	
-	memcmp(tmp.bind_addr, ip, strlen(ip));
+	memcpy(tmp.bind_addr, ip, strlen(ip));
 	tmp.bind_port = port;
 	tmp.path_cb = path_cb;
 
 	m_vecWebSocketInfo.emplace_back(std::move(tmp));
+
+	return 0;
 }
 
 void
@@ -324,7 +329,7 @@ CTCPServerManager::ThreadAccept(CTCPServerManager *pThis)
 			-1, (struct sockaddr *)&sin, sizeof(sin));
 
 		if (!_item.listener) {
-			printf("Could not create a listener! 尝试换个端口或者稍等一会。");
+			perror("Could not create a listener!");
 			exit(1);
 		}
 
@@ -334,42 +339,56 @@ CTCPServerManager::ThreadAccept(CTCPServerManager *pThis)
 	// websocket 监听信息
     for (auto& _item : pThis->m_vecWebSocketInfo)
     {
-		_item.http = evhttp_new(pThis->m_LibeventListenBase);
-        evhttp_bind_socket_with_handle(_item.http, _item.bind_addr, _item.bind_port);
+		for (auto& work_info : pThis->m_workBaseVec)
+		{
+            _item.http = evhttp_new(work_info.base);
 
-        evhttp_set_cb(m_WebSocketInfo.http_server, "/", htt_common_cb, NULL);
-        evhttp_set_cb(m_WebSocketInfo.http_server, "/ws", on_ws, NULL);
+			evutil_socket_t socket = evutil_socket_(AF_INET, SOCK_STREAM, 0);
+			if (evutil_make_socket_nonblocking(socket) != 0)
+			{
+				perror("设置非阻塞 socket 失败");
+                exit(1);
+			}
 
+			if (evutil_make_listen_socket_reuseable(socket) != 0)
+			{
+				perror("设置地址重用 socket 失败");
+                exit(1);
+			}
 
-        // 开始监听
-        sockaddr_in sin = {};
-        sin.sin_family = AF_INET;
-        sin.sin_port = htons(_item.bind_port);
-        sin.sin_addr.s_addr = inet_addr(_item.bind_addr);
+			if (evutil_make_listen_socket_reuseable_port(socket) != 0)
+			{
+				perror("设置端口重用 socket 失败");
+                exit(1);
+			}
 
-        _item.listener = evconnlistener_new_bind(
-            _item.base,
-            TcpListenCB,
-            &_item,
-            LEV_OPT_REUSEABLE | LEV_OPT_CLOSE_ON_FREE,
-            -1, (struct sockaddr*)&sin, sizeof(sin));
+            sockaddr_in stServaddr = {};
+            stServaddr.sin_family = AF_INET;
+            stServaddr.sin_addr.s_addr = inet_addr(_item.bind_addr);
+            stServaddr.sin_port = htons(_item.bind_port);
+			if (bind(socket, (struct sockaddr*)&stServaddr, sizeof(stServaddr)) != 0)
+			{
+                perror("bind socket 失败");
+                exit(1);
+			}
 
-        if (!_item.listener) {
-            printf("Could not create a listener! 尝试换个端口或者稍等一会。");
-            exit(1);
-        }
+			if (listen(socket, 128) != 0)
+			{
+				perror("listen socket 失败");
+                exit(1);
+			}
 
-        evconnlistener_set_error_cb(_item.listener, AcceptErrorCB);
+			evhttp_accept_socket(_item.http, socket);
+
+			for (auto& _path : _item.path_cb)
+			{
+                evhttp_set_cb(_item.http, _path.path.c_str(), _path.cb, _path.args);
+			}
+		}
     }
 
-	//// 开始监听
-	//event_base_dispatch(pThis->m_listenThreadInfo.base);
-
-	//evconnlistener_free(pThis->m_listenThreadInfo.listener);
-	//event_base_free(pThis->m_listenThreadInfo.base);
-
-
-	//INFO_LOG("ThreadAccept thread exit.");
+	//
+	event_base_dispatch(pThis->m_LibeventListenBase);
 }
 
 void
@@ -393,7 +412,7 @@ void
 CTCPServerManager::TcpListenCB(struct evconnlistener *listener,
 	evutil_socket_t fd, struct sockaddr *sa, int socklen, void *user_data)
 {
-	CTCPServerManager *pThis = (CTCPServerManager *)user_data;
+	TcpSocketInfo* listen_info = (TcpSocketInfo*)user_data;
 
 	{
 		struct sockaddr_in listendAddr = {}, connectedAddr = {}, peerAddr = {};
@@ -421,10 +440,10 @@ CTCPServerManager::TcpListenCB(struct evconnlistener *listener,
 	}
 
 	// 最大连接数判断
-	if (pThis->GetCurSocketSize() >= pThis->m_uMaxSocketSize) {
+	if (listen_info->connect_count >= listen_info->max_connect) {
 		ERROR_LOG("服务器已经满：fd=%Id [%s][人数：%u/%u]", fd,
 			CTCPServerManager::GetSocketNameIpAndPort(fd).c_str(),
-			pThis->GetCurSocketSize(), pThis->m_uMaxSocketSize);
+			listen_info->connect_count, listen_info->max_connect);
 
 		// 分配失败
 		NetMessageHead netHead = {};
@@ -442,15 +461,15 @@ CTCPServerManager::TcpListenCB(struct evconnlistener *listener,
 
 	//
 	static int lastThreadIndex = 0;
-	lastThreadIndex = lastThreadIndex % pThis->m_workBaseVec.size();
+	lastThreadIndex = lastThreadIndex %  listen_info->pThis->m_workBaseVec.size();
 
 	// 投递到接收线程
 	do {
-		std::lock_guard<std::mutex> lck(pThis->m_workBaseVec[lastThreadIndex].mtx);
-		pThis->m_workBaseVec[lastThreadIndex].vecFd.push_back(fd);
+		//std::lock_guard<std::mutex> lck(listen_info->pThis->m_workBaseVec[lastThreadIndex].mtx);
+		listen_info->pThis->m_workBaseVec[lastThreadIndex].vecFd.push_back(fd);
 	} while (false);
 
-	evuser_trigger(pThis->m_workBaseVec[lastThreadIndex].event_notify);
+	evuser_trigger(listen_info->pThis->m_workBaseVec[lastThreadIndex].event_notify);
 
 	lastThreadIndex++;
 }
@@ -473,86 +492,9 @@ CTCPServerManager::EventCB(struct bufferevent *, short, void *)
 void
 CTCPServerManager::AcceptErrorCB(struct evconnlistener *listener, void *)
 {
+	int a = 0;
 }
 
-void
-CTCPServerManager::ThreadLibeventProcess(
-	evutil_socket_t readfd, short which, void *arg)
-{
-	/*
-		该函数会被多个线程执行
-	*/
-
-	WorkThreadInfo *workInfo = (WorkThreadInfo *)arg;
-
-	std::vector<int> vecFd;
-	do {
-		std::lock_guard<std::mutex> lck(workInfo->mtx);
-		vecFd = workInfo->vecFd;
-		workInfo->vecFd.clear();
-
-	} while (false);
-
-	for (auto fd : vecFd) {
-		// 处理连接
-		workInfo->pThis->AddTCPSocketInfo(fd, workInfo);
-	}
-}
-
-int
-CTCPServerManager::GetCurSocketSize() const
-{
-	return m_uCurSocketSize;
-}
-
-void
-CTCPServerManager::AddTCPSocketInfo(int fd, WorkThreadInfo *workInfo)
-{
-	/*
-		该函数会被多个线程执行
-	*/
-	struct event_base *base = workInfo->base;
-
-
-	struct bufferevent *bev = bufferevent_socket_new(
-		base, fd, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE);
-	if (!bev) {
-		ERROR_LOG("Error constructing bufferevent!,fd=%d,ip=%s", fd,
-			CTCPServerManager::GetSocketNameIpAndPort(fd).c_str());
-		evutil_closesocket(fd);
-		return;
-	}
-
-	// 添加事件，并设置好回调函数
-	bufferevent_setcb(bev, ReadCB, NULL, EventCB, (void *)workInfo);
-	if (bufferevent_enable(bev, EV_READ | EV_ET) < 0) {
-		ERROR_LOG("add event fail!!!,fd=%d,ip=%s", fd,
-			CTCPServerManager::GetSocketNameIpAndPort(fd).c_str());
-		evutil_closesocket(fd);
-		bufferevent_free(bev);
-		return;
-	}
-
-	// 设置读超时, 即使是内部连接也需要心跳来判断是否还存活(进程没有卡死)
-	timeval tvRead;
-	tvRead.tv_sec = 15 * 3;
-	tvRead.tv_usec = 0;
-	bufferevent_set_timeouts(bev, &tvRead, NULL);
-
-	// 保存信息
-	{
-		TcpSocketInfo sock_info;
-		sock_info.bev = bev;
-
-		std::lock_guard<std::mutex> lck(workInfo->pThis->m_mtxFd2SocketInfo);
-		m_mapFd2SocketInfo[fd] = std::move(sock_info);
-	}
-
-	{
-		std::lock_guard<std::mutex> lck(workInfo->pThis->m_mtxSocketSize);
-		m_uCurSocketSize++;
-	}
-}
 
 bool
 CTCPServerManager::RecvData(bufferevent *bev)
@@ -694,23 +636,9 @@ CTCPServerManager::CloseSocket(bufferevent *bev)
 {
 	int fd = bufferevent_getfd(bev);
 
-	{
-		std::lock_guard<std::mutex> lck(m_mtxSocketSize);
-		m_uCurSocketSize--;
-	}
-
-	{
-		std::lock_guard<std::mutex> lck(m_mtxFd2SocketInfo);
-		m_mapFd2SocketInfo.erase(fd);
-	}
 
 	bufferevent_free(bev);
 
-
-	// 回调业务层
-	if (m_pService) {
-		m_pService->OnSocketCloseEvent(m_nSocketType, fd);
-	}
 
 	return true;
 }
