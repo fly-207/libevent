@@ -38,82 +38,56 @@ struct HttpPathCallBack
 // 工作线程信息
 struct WorkThreadInfo
 {
-    std::unique_ptr< std::thread> thread;
     struct event_base* base;
 	struct event *event_notify;
 
     CTCPServerManager* pThis;
-
-    std::shared_ptr<std::mutex> mtx;
-    std::vector<int> vecFd;
-
 };
 
-// TCP信息
-struct TcpSocketInfo
+
+struct TcpListenInfo
 {
-	char bind_addr[32];
-	int bind_port;
-	int max_connect;
-	int socket_type;
-    CTCPServerManager* pThis;
-
-	evconnlistener *listener;
-	int connect_count;
-
+    int max_connect;
+    int socket_type;
+    event_base* base;
+    evconnlistener* listener;
     std::map<int, bufferevent*> connectd_info;
 };
 
-
-// websocket 信息
-struct WebSocketInfo {
-	char bind_addr[32];
-	int bind_port;
-	int max_connect;
-
-    CTCPServerManager* pThis;
-	std::vector<HttpPathCallBack> path_cb;
-
-    evhttp* http;
-	int connect_count;
-};
 
 class CTCPServerManager
 {
 public:
     //
-	CTCPServerManager(int nWorkSize);
+	CTCPServerManager();
 	//
     ~CTCPServerManager();
 
 public:
 	// 添加监听信息
-	int AddTcpListenInfo(int maxCount, const char *ip, int port, int socketType);
+	int AddTcpListenInfo(int socketType, const char* addr, int port, int maxCount);
 	// 添加监听信息
 	int AddWebSocket(const char *ip, int port, const std::vector<HttpPathCallBack>& path_cb);
     // 开始服务
     bool Start();
     // 停止服务
     bool Stop();
-
-private:
-    void StartWorker();
+    //
+    static CTCPServerManager* GetNetManager();
 
 
 protected:
-    // SOCKET 连接应答线程
-    static void ThreadAccept(CTCPServerManager* pThreadData);
     // SOCKET 数据接收线程
-    static void ThreadRSSocket(WorkThreadInfo* pThreadData);
+    static void ThreadTcpDispatch(int nTcpInfoIndex);
     // 外部需要发送的消息, 由此线程写入 buff
     static void ThreadSendMsg(CTCPServerManager* pThreadData);
 
 protected:
     // 新的连接到来，ThreadAccept线程函数
     static void TcpListenCB(struct evconnlistener* listener, evutil_socket_t fd, struct sockaddr* sa, int socklen, void* user_data);
-    // 新的数据到来，ThreadRSSocket线程函数
+    // 新的数据到来
     static void ReadCB(struct bufferevent*, void*);
-    // 连接关闭等等错误消息，ThreadRSSocket线程函数
+    // 连接关闭等等错误消息
     static void EventCB(struct bufferevent*, short, void*);
     // accept失败，ThreadAccept线程函数
     static void AcceptErrorCB(struct evconnlistener* listener, void*);
@@ -131,9 +105,6 @@ private:
     static std::string GetSocketPeerIpAndPort(int fd);
 
 private:
-
-    const int m_nWorkCount;
-
     event_base* m_LibeventListenBase;
 
     // m_mapFd2SocketInfo 在监听线程会更改, 在 sendMsg 中可能会关闭连接时更改
@@ -146,12 +117,16 @@ private:
     std::thread m_threadSendMsg;
 
 	// 注册的 tcp 监听信息
-	std::vector<TcpSocketInfo> m_vecTcpSocketInfo;
+	std::vector<std::shared_ptr<TcpListenInfo>> m_vecTcpSocketInfo;
 
     // 注册的 web socket 信息
-	std::vector<WebSocketInfo> m_vecWebSocketInfo;
+	//std::vector<WebSocketInfo> m_vecWebSocketInfo;
 	// 工作线程信息
 	std::vector<WorkThreadInfo> m_workBaseVec;
+
+private:
+    static CTCPServerManager m_netManager;
+
 };
 
 

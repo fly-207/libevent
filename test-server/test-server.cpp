@@ -45,26 +45,34 @@ main()
 #ifdef _WIN32
 	WSADATA wsa_data;
 	WSAStartup(0x0201, &wsa_data);
-	evthread_use_windows_threads();
+	//evthread_use_windows_threads();
 #else
 	evthread_use_pthreads();
 
 #endif
 
-	CTCPServerManager a(4);
+	CTCPServerManager *a = CTCPServerManager::GetNetManager();
 
 	ServerSocketHander b;
 
-    a.AddTcpListenInfo(10, "0.0.0.0", 49999, 1);
-    a.AddTcpListenInfo(10, "0.0.0.0", 50000, 2);
+    a->AddTcpListenInfo(1, "0.0.0.0", 49980, 2);
+    a->AddTcpListenInfo(1, "0.0.0.0", 49981, 2);
+    a->AddTcpListenInfo(2, "0.0.0.0", 49990, 3);
+    a->AddTcpListenInfo(2, "0.0.0.0", 49991, 3);
 
-	HttpPathCallBack c1 = { "cb1", cb1, 0 };
-    HttpPathCallBack c2 = { "cb2", cb2, 0 };
-	a.AddWebSocket("0.0.0.0", 50001, {c1 ,c2});
+    //a.AddTcpListenInfo(10, "0.0.0.0", 50000, 2, 2);
 
-	a.Start();
+	//HttpPathCallBack c1 = { "/cb1", cb1, 0 };
+ //   HttpPathCallBack c2 = { "/cb2", cb2, 0 };
+	//a.AddWebSocket("0.0.0.0", 50001, {c1 ,c2});
 
-	Sleep(5000000);
+	a->Start();
+
+	Sleep(1000*3);
+
+	a->Stop();
+
+    Sleep(1000 * 3000);
 
 	return 0;
 }
