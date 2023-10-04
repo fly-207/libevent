@@ -65,6 +65,15 @@ struct TcpListenInfo
 };
 
 
+struct TcpConnectInfo
+{
+    int socket_type;
+    char addr[32];
+    int port;
+
+    int fd;
+};
+
 class CTCPServerManager
 {
 public:
@@ -80,12 +89,26 @@ public:
 	int AddHttpInfo(const char * addr, int port, const std::vector<HttpPathCallBack>& path_cb);
     // 添加 websocket
     int AddWebSocketInfo(int socketType, const char* addr, int port, const char * ws_path);
+    //
+    int AddTcpConnectInfo(int socketType, const char* addr, int port);
+    
     // 开始服务
     bool Start();
     // 停止服务
     bool Stop();
     //
     static CTCPServerManager* GetNetManager();
+
+
+private:
+    //
+    static void TcpConnectRecvCB(struct bufferevent* bev, void* ctx);
+    //
+    static void TcpConnectEventCB(struct bufferevent* bev, short what, void* ctx);
+
+protected:
+    //
+    void InitConnectBase();
 
 
 protected:
@@ -95,6 +118,8 @@ protected:
     static void ThreadHttpDispatch(int nHttpInfoIndex);
     //
     static void ThreadWebSocketDispatch(int nWebSocketInfoIndex);
+    //
+    static void ThreadConnectDispatch();
 
 public:
     // 外部需要发送的消息, 由此线程写入 buff
@@ -129,16 +154,8 @@ private:
     static std::string GetSocketPeerIpAndPort(int fd);
 
 private:
-    event_base* m_LibeventListenBase;
-
-    // m_mapFd2SocketInfo 在监听线程会更改, 在 sendMsg 中可能会关闭连接时更改
-    std::mutex m_mtxFd2SocketInfo;
-
-    // accept 线程信息
-    std::thread m_threadAccept;
-
-    // 
-    std::thread m_threadSendMsg;
+    //
+    event_base* m_pConnectBase;
 
 	// 注册的 tcp 监听信息
 	std::vector<std::shared_ptr<TcpListenInfo>> m_vecTcpSocketInfo;
@@ -149,9 +166,8 @@ private:
     // 注册的 web socket 信息
     std::vector<std::shared_ptr<WebSocketWorkerInfo>> m_vecWebSocketWorkerInfo;
 
-
-private:
-    static CTCPServerManager m_netManager;
+    // 注册的 client 信息
+    std::vector<std::shared_ptr<TcpConnectInfo>> m_vecConnectInfo;
 
 };
 

@@ -13,7 +13,7 @@
 
 CTCPServerManager::CTCPServerManager()
 {
-
+	m_pConnectBase = nullptr;
 }
 
 CTCPServerManager::~CTCPServerManager()
@@ -88,9 +88,19 @@ CTCPServerManager::Start()
 bool
 CTCPServerManager::Stop()
 {
-    for (int i = 0; i != m_vecTcpSocketInfo.size(); i++)
+    for (auto& _item : m_vecTcpSocketInfo)
     {
-		event_base_loopbreak(m_vecTcpSocketInfo[i]->base);
+        event_base_loopbreak(_item->base);
+    }
+
+    for (auto &_item: m_vecHttpWorkerInfo)
+    {
+        event_base_loopbreak(_item->base);
+    }
+
+    for (auto& _item : m_vecWebSocketWorkerInfo)
+    {
+        event_base_loopbreak(_item->base);
     }
 
     return true;
@@ -99,9 +109,40 @@ CTCPServerManager::Stop()
 
 CTCPServerManager* CTCPServerManager::GetNetManager()
 {
-	return &m_netManager;
+
+    static CTCPServerManager *pNetManager = NULL;
+	if (!pNetManager)
+	{
+		pNetManager = new CTCPServerManager();
+	}
+
+	return pNetManager;
 }
 
+
+void CTCPServerManager::TcpConnectRecvCB(struct bufferevent* bev, void* ctx)
+{
+
+}
+
+void CTCPServerManager::TcpConnectEventCB(struct bufferevent* bev, short events, void* ctx)
+{
+	// 链接成功
+	if (events & BEV_EVENT_CONNECTED)
+    {
+		printf("client connect success[fd=%d]\n", bufferevent_getfd(bev));
+        return;
+    }
+	// 超时事件
+	else if (events & BEV_EVENT_TIMEOUT)
+	{
+        printf("time out event[fd=%d]\n", bufferevent_getfd(bev));
+	}
+	else
+	{
+	    bufferevent_free(bev);
+	}
+}
 
 int CTCPServerManager::AddHttpInfo(const char * addr, int port,
 	const std::vector<HttpPathCallBack> &path_cb)
@@ -158,6 +199,47 @@ int CTCPServerManager::AddWebSocketInfo(int socketType, const char* addr, int po
     return 0;
 }
 
+int CTCPServerManager::AddTcpConnectInfo(int socketType, const char* addr, int port)
+{
+	InitConnectBase();
+
+    struct bufferevent* bev = bufferevent_socket_new(m_pConnectBase, -1, BEV_OPT_CLOSE_ON_FREE);
+    if (!bev)
+    {
+		exit(1);
+    }
+
+	//
+    sockaddr_in sin = {};
+    sin.sin_addr.s_addr = inet_addr(addr);
+    sin.sin_family = AF_INET;
+    sin.sin_port = htons(port);
+
+    // 内部会自动创建 fd
+    if (bufferevent_socket_connect(bev, (struct sockaddr*)&sin, sizeof(sin)) != 0)
+    {
+		exit(1);
+    }
+
+    bufferevent_setcb(bev, CTCPServerManager::TcpConnectRecvCB, NULL, CTCPServerManager::TcpConnectEventCB, (void *)m_vecConnectInfo.size());
+    bufferevent_enable(bev, EV_READ | EV_WRITE);
+
+	std::shared_ptr<TcpConnectInfo> _tmp = std::make_shared<TcpConnectInfo>();
+	memcpy(_tmp->addr, addr, strlen(addr));
+	_tmp->port = port;
+	_tmp->socket_type = socketType;
+	_tmp->fd = bufferevent_getfd(bev);
+	m_vecConnectInfo.emplace_back(std::move(_tmp));
+}
+
+void CTCPServerManager::InitConnectBase()
+{
+	if (m_pConnectBase)
+		return;
+
+	m_pConnectBase = event_base_new();
+}
+
 void CTCPServerManager::ThreadTcpDispatch(int nTcpInfoIndex)
 {
     CTCPServerManager* pNetManager = CTCPServerManager::GetNetManager();
@@ -206,6 +288,19 @@ void CTCPServerManager::ThreadWebSocketDispatch(int nWebSocketInfoIndex)
     evhttp_free(pInfo->http);
 
     event_base_free(pInfo->base);
+}
+
+void CTCPServerManager::ThreadConnectDispatch()
+{
+    CTCPServerManager* pNetManager = CTCPServerManager::GetNetManager();
+
+    printf("event loop for connect start[%d]================================\n", std::this_thread::get_id());
+
+    event_base_dispatch(pNetManager->m_pConnectBase);
+
+    printf("event loop for connect end[%d]================================\n", std::this_thread::get_id());
+
+    event_base_free(pNetManager->m_pConnectBase);
 }
 
 void
@@ -444,6 +539,3 @@ CTCPServerManager::GetSocketPeerIpAndPort(int fd)
 
 	return out;
 }
-
-
-CTCPServerManager CTCPServerManager::m_netManager;
