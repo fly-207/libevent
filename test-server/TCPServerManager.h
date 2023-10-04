@@ -13,6 +13,7 @@
 #include <string>
 #include "evconfig-private.h"
 #include <map>
+#include <event2/ws.h>
 struct bufferevent;
 
 
@@ -36,12 +37,21 @@ struct HttpPathCallBack
 };
 
 // 工作线程信息
-struct WorkThreadInfo
+struct WebSocketWorkerInfo
 {
-    struct event_base* base;
-	struct event *event_notify;
+    int max_connect;
+    int socket_type;
+    event_base* base;
+    evhttp* http;
+    std::map<int, evws_connection*> connectd_info;
+};
 
-    CTCPServerManager* pThis;
+
+struct HttpWorkerInfo
+{
+    event_base* base;
+    evhttp* http;
+    std::vector< HttpPathCallBack> path;
 };
 
 
@@ -67,7 +77,9 @@ public:
 	// 添加监听信息
 	int AddTcpListenInfo(int socketType, const char* addr, int port, int maxCount);
 	// 添加监听信息
-	int AddWebSocket(const char *ip, int port, const std::vector<HttpPathCallBack>& path_cb);
+	int AddHttpInfo(const char * addr, int port, const std::vector<HttpPathCallBack>& path_cb);
+    // 添加 websocket
+    int AddWebSocketInfo(int socketType, const char* addr, int port, const char * ws_path);
     // 开始服务
     bool Start();
     // 停止服务
@@ -79,6 +91,12 @@ public:
 protected:
     // SOCKET 数据接收线程
     static void ThreadTcpDispatch(int nTcpInfoIndex);
+    //
+    static void ThreadHttpDispatch(int nHttpInfoIndex);
+    //
+    static void ThreadWebSocketDispatch(int nWebSocketInfoIndex);
+
+public:
     // 外部需要发送的消息, 由此线程写入 buff
     static void ThreadSendMsg(CTCPServerManager* pThreadData);
 
@@ -86,17 +104,23 @@ protected:
     // 新的连接到来，ThreadAccept线程函数
     static void TcpListenCB(struct evconnlistener* listener, evutil_socket_t fd, struct sockaddr* sa, int socklen, void* user_data);
     // 新的数据到来
-    static void ReadCB(struct bufferevent*, void*);
-    // 连接关闭等等错误消息
-    static void EventCB(struct bufferevent*, short, void*);
+    static void TcpReadCB(struct bufferevent*, void*);
     // accept失败，ThreadAccept线程函数
     static void AcceptErrorCB(struct evconnlistener* listener, void*);
+    //
+    static void TcpEventCB(struct bufferevent* bev, short events, void* ctx);
+    // 最底层处理收到的数据函数
+    bool TcpRecvData(bufferevent* bev);
+
+protected:
+    // 
+    static void WebSocketFromHttpCB(struct evhttp_request* req, void* arg);
 
 private:
-    // 最底层处理收到的数据函数
-    bool RecvData(bufferevent* bev);
-    // 关闭socket
-    bool CloseSocket(bufferevent* bev);
+    //
+    static void WebSocketRecvData(struct evws_connection* evws, int type, const unsigned char* data, size_t len, void* arg);
+    //
+    static void WebSocketClosed(struct evws_connection* evws, void* arg);
 
 private:
     // 返回 socket 本地的 xx.xx.xx.xx:xxxx 形式的字符串串
@@ -119,10 +143,12 @@ private:
 	// 注册的 tcp 监听信息
 	std::vector<std::shared_ptr<TcpListenInfo>> m_vecTcpSocketInfo;
 
+    // 注册的 http 信息
+	std::vector<std::shared_ptr<HttpWorkerInfo>> m_vecHttpWorkerInfo;
+
     // 注册的 web socket 信息
-	//std::vector<WebSocketInfo> m_vecWebSocketInfo;
-	// 工作线程信息
-	std::vector<WorkThreadInfo> m_workBaseVec;
+    std::vector<std::shared_ptr<WebSocketWorkerInfo>> m_vecWebSocketWorkerInfo;
+
 
 private:
     static CTCPServerManager m_netManager;

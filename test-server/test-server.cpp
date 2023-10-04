@@ -62,15 +62,17 @@ main()
 
     //a.AddTcpListenInfo(10, "0.0.0.0", 50000, 2, 2);
 
-	//HttpPathCallBack c1 = { "/cb1", cb1, 0 };
- //   HttpPathCallBack c2 = { "/cb2", cb2, 0 };
-	//a.AddWebSocket("0.0.0.0", 50001, {c1 ,c2});
+	HttpPathCallBack c1 = { "/cb1", cb1, 0 };
+    HttpPathCallBack c2 = { "/cb2", cb2, 0 };
+	a->AddHttpInfo("0.0.0.0", 50001, {c1 ,c2});
+
+    a->AddWebSocketInfo(3, "0.0.0.0", 55000, "/ws");
 
 	a->Start();
 
-	Sleep(1000*3);
+	//Sleep(1000*3);
 
-	a->Stop();
+	//a->Stop();
 
     Sleep(1000 * 3000);
 

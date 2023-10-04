@@ -9,30 +9,7 @@
 #include <event2/http.h>
 #include <event2/ws.h>
 
-static void
-time_cb(evutil_socket_t fd, short event, void *arg)
-{
-}
 
-static int
-rand_int(int n)
-{
-	return n;
-}
-
-
-#define log_d(...) fprintf(stderr, __VA_ARGS__)
-
-typedef struct client {
-	struct evws_connection *evws;
-	char name[INET6_ADDRSTRLEN];
-	TAILQ_ENTRY(client) next;
-} client_t;
-typedef struct clients_s {
-	struct client *tqh_first;
-	struct client **tqh_last;
-} clients_t;
-static clients_t clients;
 
 CTCPServerManager::CTCPServerManager()
 {
@@ -82,46 +59,7 @@ int CTCPServerManager::AddTcpListenInfo(int socketType, const char* addr, int po
     return 0;
 }
 
-void
-client_event_cb(struct bufferevent *bev, short events, void *ctx)
-{
-	if (events & BEV_EVENT_EOF) {
-		printf("Connection closed=[%d]\n", bufferevent_getfd(bev));
-	} else if (events & BEV_EVENT_ERROR) {
-		printf("Got an error on the connection: %s\n",
-			strerror(errno)); /*XXX win32*/
-	}
-	/* None of the other events can happen here, since we haven't enabled
-	 * timeouts */
-	bufferevent_free(bev);
-}
 
-//static void
-//callback3(evutil_socket_t , short, void *arg)
-//{
-//	WorkThreadInfo *pthread_info = (WorkThreadInfo *)arg;
-//
-//	std::vector<int> vecFd;
-//	do {
-//		//std::lock_guard<std::mutex> lck(pthread_info->mtx);
-//		vecFd = pthread_info->vecFd;
-//		pthread_info->vecFd.clear();
-//	} while (false);
-//
-//	for (auto _fd : vecFd)
-//	{
-//		struct event_base *base = pthread_info->base;
-//		struct bufferevent *bev= bufferevent_socket_new(base, _fd, BEV_OPT_CLOSE_ON_FREE);
-//		if (!bev) {
-//			fprintf(stderr, "Error constructing bufferevent!");
-//			event_base_loopbreak(base);
-//			return;
-//		}
-//		bufferevent_setcb(bev, client_read_cb, NULL, client_event_cb, arg);
-//		bufferevent_enable(bev, EV_WRITE | EV_READ);
-//	}
-//
-//}
 
 bool
 CTCPServerManager::Start()
@@ -131,6 +69,18 @@ CTCPServerManager::Start()
 		std::thread thread = std::thread(CTCPServerManager::ThreadTcpDispatch, i);
 		thread.detach();
 	}
+
+    for (int i = 0; i != m_vecHttpWorkerInfo.size(); i++)
+    {
+        std::thread thread = std::thread(CTCPServerManager::ThreadHttpDispatch, i);
+        thread.detach();
+    }
+
+    for (int i = 0; i != m_vecWebSocketWorkerInfo.size(); i++)
+    {
+        std::thread thread = std::thread(CTCPServerManager::ThreadWebSocketDispatch, i);
+        thread.detach();
+    }
 
 	return true;
 }
@@ -147,153 +97,66 @@ CTCPServerManager::Stop()
 }
 
 
-
-
 CTCPServerManager* CTCPServerManager::GetNetManager()
 {
 	return &m_netManager;
 }
 
-static void
-htt_common_cb(struct evhttp_request *req, void *arg)
-{
-	evhttp_send_error(req, 200, "正确返回输出测试");
-}
 
-static void
-on_close_cb(struct evws_connection *evws, void *arg)
-{
-	client_t *client = (client_t *)arg;
-	printf("'%s' disconnected\n", client->name);
-	TAILQ_REMOVE(&clients, client, next);
-	free(arg);
-}
-
-static const char *
-nice_addr(const char *addr)
-{
-	if (strncmp(addr, "::ffff:", 7) == 0)
-		addr += 7;
-
-	return addr;
-}
-
-static void
-addr2str(struct sockaddr *sa, char *addr, size_t len)
-{
-	const char *nice;
-	unsigned short port;
-	size_t adlen;
-
-	if (sa->sa_family == AF_INET) {
-		struct sockaddr_in *s = (struct sockaddr_in *)sa;
-		port = ntohs(s->sin_port);
-		evutil_inet_ntop(AF_INET, &s->sin_addr, addr, len);
-	} else { // AF_INET6
-		struct sockaddr_in6 *s = (struct sockaddr_in6 *)sa;
-		port = ntohs(s->sin6_port);
-		evutil_inet_ntop(AF_INET6, &s->sin6_addr, addr, len);
-		nice = nice_addr(addr);
-		if (nice != addr) {
-			size_t len = strlen(addr) - (nice - addr);
-			memmove(addr, nice, len);
-			addr[len] = 0;
-		}
-	}
-	adlen = strlen(addr);
-	snprintf(addr + adlen, len - adlen, ":%d", port);
-}
-
-
-static void
-broadcast_msg(char *msg)
-{
-	struct client *client;
-
-	TAILQ_FOREACH (client, &clients, next) {
-		evws_send(client->evws, msg, strlen(msg));
-	}
-	log_d("%s\n", msg);
-}
-
-static void
-on_msg_cb(struct evws_connection *evws, int type, const unsigned char *data,
-	size_t len, void *arg)
-{
-	struct client *self = (client *)arg;
-	char buf[4096];
-	const char *msg = (const char *)data;
-
-	snprintf(buf, sizeof(buf), "%.*s", (int)len, msg);
-	if (len == 5 && memcmp(buf, "/quit", 5) == 0) {
-		evws_close(evws, WS_CR_NORMAL);
-		snprintf(buf, sizeof(buf), "'%s' left the chat", self->name);
-	} else if (len > 6 && strncmp(msg, "/name ", 6) == 0) {
-		const char *new_name = (const char *)msg + 6;
-		int name_len = len - 6;
-
-		snprintf(buf, sizeof(buf), "'%s' renamed itself to '%.*s'", self->name,
-			name_len, new_name);
-		snprintf(
-			self->name, sizeof(self->name) - 1, "%.*s", name_len, new_name);
-	} else {
-		snprintf(buf, sizeof(buf), "[%s] %.*s", self->name, (int)len, msg);
-	}
-
-	broadcast_msg(buf);
-}
-
-
-static void
-on_ws(struct evhttp_request *req, void *arg)
-{
-	struct client *cli = (client *)malloc(sizeof(client));
-	evutil_socket_t fd;
-	struct sockaddr_storage addr;
-	socklen_t len;
-
-
-	cli->evws = evws_new_session(req, on_msg_cb, cli, 0);
-	if (!cli->evws) {
-		free(cli);
-		log_d("Failed to create session\n");
-		return;
-	}
-
-	fd = bufferevent_getfd(evws_connection_get_bufferevent(cli->evws));
-
-	len = sizeof(addr);
-	getpeername(fd, (struct sockaddr *)&addr, &len);
-	addr2str((struct sockaddr *)&addr, cli->name, sizeof(cli->name));
-
-	log_d("New client joined from %s\n", cli->name);
-
-	evws_connection_set_closecb(cli->evws, on_close_cb, cli);
-
-	do {
-		(cli)->next.tqe_next = 0;
-		(cli)->next.tqe_prev = (&clients)->tqh_last;
-		*(&clients)->tqh_last = (cli);
-		(&clients)->tqh_last = &(cli)->next.tqe_next;
-	} while (0);
-}
-
-
-int
-CTCPServerManager::AddWebSocket(const char *ip, int port,
+int CTCPServerManager::AddHttpInfo(const char * addr, int port,
 	const std::vector<HttpPathCallBack> &path_cb)
 {
-	//WebSocketInfo tmp = {};
-	//
-	//memcpy(tmp.bind_addr, ip, strlen(ip));
-	//tmp.bind_port = port;
-	//tmp.path_cb = path_cb;
+    event_base* base = event_base_new();
+    if (!base)
+    {
+        exit(1);
+    }
 
-	//m_vecWebSocketInfo.emplace_back(std::move(tmp));
+    auto *http = evhttp_new(base);
+    if (!http) {
+		exit(1);
+    }
+	evhttp_bind_socket(http, addr, port);
 
-	return 0;
+	for (auto& _item : path_cb)
+	{
+        evhttp_set_cb(http, _item.path.c_str(), _item.cb, _item.args);
+	}
+
+    std::shared_ptr<HttpWorkerInfo> ptr_listen_info = std::make_shared<HttpWorkerInfo>();
+    ptr_listen_info->base = base;
+    ptr_listen_info->http = http;
+    ptr_listen_info->path = path_cb;
+	m_vecHttpWorkerInfo.emplace_back(ptr_listen_info);
+
+    return 0;
 }
 
+
+int CTCPServerManager::AddWebSocketInfo(int socketType, const char* addr, int port, const char * ws_path)
+{
+    event_base* base = event_base_new();
+    if (!base)
+    {
+        exit(1);
+    }
+
+    auto* http = evhttp_new(base);
+    if (!http) {
+        exit(1);
+    }
+    evhttp_bind_socket(http, addr, port);
+
+	evhttp_set_cb(http, ws_path, WebSocketFromHttpCB, (void *)m_vecWebSocketWorkerInfo.size());
+
+    std::shared_ptr<WebSocketWorkerInfo> ptr_listen_info = std::make_shared<WebSocketWorkerInfo>();
+    ptr_listen_info->base = base;
+    ptr_listen_info->http = http;
+	ptr_listen_info->socket_type = socketType;
+    m_vecWebSocketWorkerInfo.emplace_back(ptr_listen_info);
+
+    return 0;
+}
 
 void CTCPServerManager::ThreadTcpDispatch(int nTcpInfoIndex)
 {
@@ -309,6 +172,40 @@ void CTCPServerManager::ThreadTcpDispatch(int nTcpInfoIndex)
     //
 	evconnlistener_free(pListenInfo->listener);
     event_base_free(pListenInfo->base);
+}
+
+void CTCPServerManager::ThreadHttpDispatch(int nHttpInfoIndex)
+{
+    CTCPServerManager* pNetManager = CTCPServerManager::GetNetManager();
+	auto pInfo = pNetManager->m_vecHttpWorkerInfo[nHttpInfoIndex];
+
+    printf("event loop for http start[%d]================================\n", std::this_thread::get_id());
+
+    event_base_dispatch(pInfo->base);
+
+    printf("event loop for http end[%d]================================\n", std::this_thread::get_id());
+
+    // 内部会释放已有的链接
+	evhttp_free(pInfo->http);
+
+    event_base_free(pInfo->base);
+}
+
+void CTCPServerManager::ThreadWebSocketDispatch(int nWebSocketInfoIndex)
+{
+    CTCPServerManager* pNetManager = CTCPServerManager::GetNetManager();
+    auto pInfo = pNetManager->m_vecWebSocketWorkerInfo[nWebSocketInfoIndex];
+
+    printf("event loop for web socket start[%d]================================\n", std::this_thread::get_id());
+
+    event_base_dispatch(pInfo->base);
+
+    printf("event loop for web socket end[%d]================================\n", std::this_thread::get_id());
+
+    // 内部会释放已有的链接
+    evhttp_free(pInfo->http);
+
+    event_base_free(pInfo->base);
 }
 
 void
@@ -332,14 +229,14 @@ CTCPServerManager::TcpListenCB(struct evconnlistener *listener,
         return;
     }
 
-    bufferevent_setcb(bev, CTCPServerManager::ReadCB, NULL, client_event_cb, user_data);
+    bufferevent_setcb(bev, CTCPServerManager::TcpReadCB, NULL, CTCPServerManager::TcpEventCB, user_data);
     bufferevent_enable(bev, EV_WRITE | EV_READ);
 
 	pListenInfo->connectd_info[fd] = bev;
 }
 
 void
-CTCPServerManager::ReadCB(struct bufferevent *bev, void *data)
+CTCPServerManager::TcpReadCB(struct bufferevent *bev, void *data)
 {
     char msg[1024] = {};
     bufferevent_read(bev, msg, sizeof(msg));
@@ -347,10 +244,6 @@ CTCPServerManager::ReadCB(struct bufferevent *bev, void *data)
     printf("client msg=[%d:%d:%s]\n", std::this_thread::get_id(), bufferevent_getfd(bev), msg);
 }
 
-void
-CTCPServerManager::EventCB(struct bufferevent *, short, void *)
-{
-}
 
 void
 CTCPServerManager::AcceptErrorCB(struct evconnlistener *listener, void *)
@@ -359,12 +252,41 @@ CTCPServerManager::AcceptErrorCB(struct evconnlistener *listener, void *)
 }
 
 
+void CTCPServerManager::TcpEventCB(struct bufferevent* bev, short events, void* ctx)
+{
+    int nSockInfoIndex = (int)ctx;
+    CTCPServerManager* pNetManager = CTCPServerManager::GetNetManager();
+    auto pInfo = pNetManager->m_vecTcpSocketInfo[nSockInfoIndex];
+
+	auto fd = bufferevent_getfd(bev);
+	pInfo->connectd_info.erase(fd);
+
+	bufferevent_free(bev);
+}
+
+void CTCPServerManager::WebSocketFromHttpCB(struct evhttp_request* req, void* arg)
+{
+    int nInfoIndex = (int)arg;
+    CTCPServerManager* pNetManager = CTCPServerManager::GetNetManager();
+    auto pInfo = pNetManager->m_vecWebSocketWorkerInfo[nInfoIndex];
+
+    auto evws = evws_new_session(req, CTCPServerManager::WebSocketRecvData, arg, 0);
+    if (!evws) {
+        return;
+    }
+
+	evws_connection_set_closecb(evws, CTCPServerManager::WebSocketClosed, arg);
+
+	evutil_socket_t fd = bufferevent_getfd(evws_connection_get_bufferevent(evws));
+	pInfo->connectd_info[fd] = evws;
+}
+
 bool
-CTCPServerManager::RecvData(bufferevent *bev)
+CTCPServerManager::TcpRecvData(bufferevent *bev)
 {
 	// if (bev == NULL)
 	//{
-	//     ERROR_LOG("RecvData error bev == NULL");
+	//     ERROR_LOG("TcpRecvData error bev == NULL");
 	//     return false;
 	// }
 
@@ -463,6 +385,36 @@ CTCPServerManager::RecvData(bufferevent *bev)
 	return true;
 }
 
+
+void CTCPServerManager::WebSocketRecvData(struct evws_connection* evws, int type, const unsigned char* data, size_t len, void* arg)
+{
+	char szRecv[1024] = {};
+	memcpy(szRecv, data, len);
+
+    evutil_socket_t fd = bufferevent_getfd(evws_connection_get_bufferevent(evws));
+
+    printf("websocket recv:[fd=%d type=%d len=%d data=%s]\n", fd,type, len, szRecv);
+
+	evws_close(evws, WS_CR_NORMAL);
+}
+
+void CTCPServerManager::WebSocketClosed(struct evws_connection* evws, void* arg)
+{
+	/*
+		evws 不需要手动关闭, 当对应的 http-connection 释放时会随着释放
+	*/
+
+    int nInfoIndex = (int)arg;
+    CTCPServerManager* pNetManager = CTCPServerManager::GetNetManager();
+    auto pInfo = pNetManager->m_vecWebSocketWorkerInfo[nInfoIndex];
+
+    evutil_socket_t fd = bufferevent_getfd(evws_connection_get_bufferevent(evws));
+
+    printf("websocket closed [fd=%d]\n", fd);
+
+	pInfo->connectd_info.erase(fd);
+}
+
 std::string
 CTCPServerManager::GetSocketNameIpAndPort(int fd)
 {
@@ -495,15 +447,3 @@ CTCPServerManager::GetSocketPeerIpAndPort(int fd)
 
 
 CTCPServerManager CTCPServerManager::m_netManager;
-
-bool
-CTCPServerManager::CloseSocket(bufferevent *bev)
-{
-	int fd = bufferevent_getfd(bev);
-
-
-	bufferevent_free(bev);
-
-
-	return true;
-}
