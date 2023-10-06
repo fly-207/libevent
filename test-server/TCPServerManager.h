@@ -71,7 +71,7 @@ struct TcpConnectInfo
     char addr[32];
     int port;
 
-    int fd;
+    bufferevent* bev;
 };
 
 class CTCPServerManager
@@ -125,6 +125,10 @@ public:
     // 外部需要发送的消息, 由此线程写入 buff
     static void ThreadSendMsg(CTCPServerManager* pThreadData);
 
+public:
+    //
+    static void ConnectBaseTimeOutCB(evutil_socket_t fd, short event, void* arg);
+
 protected:
     // 新的连接到来，ThreadAccept线程函数
     static void TcpListenCB(struct evconnlistener* listener, evutil_socket_t fd, struct sockaddr* sa, int socklen, void* user_data);
@@ -156,6 +160,7 @@ private:
 private:
     //
     event_base* m_pConnectBase;
+    event* m_pConnectTimeOut;
 
 	// 注册的 tcp 监听信息
 	std::vector<std::shared_ptr<TcpListenInfo>> m_vecTcpSocketInfo;

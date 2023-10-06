@@ -56,18 +56,19 @@ main()
 	ServerSocketHander b;
 
     a->AddTcpListenInfo(1, "0.0.0.0", 49980, 2);
-    a->AddTcpListenInfo(1, "0.0.0.0", 49981, 2);
-    a->AddTcpListenInfo(2, "0.0.0.0", 49990, 3);
-    a->AddTcpListenInfo(2, "0.0.0.0", 49991, 3);
+ //   a->AddTcpListenInfo(1, "0.0.0.0", 49981, 2);
+ //   a->AddTcpListenInfo(2, "0.0.0.0", 49990, 3);
+ //   a->AddTcpListenInfo(2, "0.0.0.0", 49991, 3);
 
-    //a.AddTcpListenInfo(10, "0.0.0.0", 50000, 2, 2);
+ //   //a.AddTcpListenInfo(10, "0.0.0.0", 50000, 2, 2);
 
-	HttpPathCallBack c1 = { "/cb1", cb1, 0 };
-    HttpPathCallBack c2 = { "/cb2", cb2, 0 };
-	a->AddHttpInfo("0.0.0.0", 50001, {c1 ,c2});
+	//HttpPathCallBack c1 = { "/cb1", cb1, 0 };
+ //   HttpPathCallBack c2 = { "/cb2", cb2, 0 };
+	//a->AddHttpInfo("0.0.0.0", 50001, {c1 ,c2});
 
-    a->AddWebSocketInfo(3, "0.0.0.0", 55000, "/ws");
+ //   a->AddWebSocketInfo(3, "0.0.0.0", 55000, "/ws");
 
+	a->AddTcpConnectInfo(4, "127.0.0.1", 49980);
 	a->Start();
 
 	//Sleep(1000*3);
