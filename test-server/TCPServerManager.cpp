@@ -184,7 +184,7 @@ int CTCPServerManager::AddHttpInfo(const char * addr, int port,
 }
 
 
-int CTCPServerManager::AddWebSocketInfo(int socketType, const char* addr, int port, const char * ws_path)
+int CTCPServerManager::AddWebSocketInfo(int socketType, const char* addr, int port, const char * ws_path, int maxCount)
 {
     event_base* base = event_base_new();
     if (!base)
@@ -204,6 +204,7 @@ int CTCPServerManager::AddWebSocketInfo(int socketType, const char* addr, int po
     ptr_listen_info->base = base;
     ptr_listen_info->http = http;
 	ptr_listen_info->socket_type = socketType;
+    ptr_listen_info->max_connect = maxCount;
     m_vecWebSocketWorkerInfo.emplace_back(ptr_listen_info);
 
     return 0;

@@ -88,7 +88,7 @@ public:
 	// 添加监听信息
 	int AddHttpInfo(const char * addr, int port, const std::vector<HttpPathCallBack>& path_cb);
     // 添加 websocket
-    int AddWebSocketInfo(int socketType, const char* addr, int port, const char * ws_path);
+    int AddWebSocketInfo(int socketType, const char* addr, int port, const char * ws_path, int maxCount);
     //
     int AddTcpConnectInfo(int socketType, const char* addr, int port);
     
