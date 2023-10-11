@@ -14,6 +14,7 @@
 #include "evconfig-private.h"
 #include <map>
 #include <event2/ws.h>
+#include <list>
 struct bufferevent;
 
 
@@ -64,14 +65,26 @@ struct TcpListenInfo
     std::map<int, bufferevent*> connectd_info;
 };
 
-
-struct TcpConnectInfo
+struct TcpClientInfo
 {
     int socket_type;
     char addr[32];
     int port;
 
     bufferevent* bev;
+};
+
+struct ConnectedInfo
+{
+    int socket_type;
+    int fd;
+    int index;
+};
+
+struct RecvMsg
+{
+    ConnectedInfo connect_info;
+    evbuffer* buff;
 };
 
 class CTCPServerManager
@@ -172,8 +185,19 @@ private:
     std::vector<std::shared_ptr<WebSocketWorkerInfo>> m_vecWebSocketWorkerInfo;
 
     // 注册的 client 信息
-    std::vector<std::shared_ptr<TcpConnectInfo>> m_vecConnectInfo;
+    std::vector<std::shared_ptr<TcpClientInfo>> m_vecConnectInfo;
 
+    // 被动关闭 fd 列表, 等待逻辑处理
+    std::mutex  m_mtxClosedFd;
+    std::list<ConnectedInfo> m_vecClosedFd;
+
+    // 主动关闭 fd 列表, 等待底层 socket 关闭
+    std::mutex m_mtxWaitCloseFd;
+    std::list<ConnectedInfo> m_vecWaitCloseFd;
+
+    // 等待逻辑处理所有消息, 消息是单线程处理的, 消息要有顺序
+    std::mutex m_mtxRecvMsg;
+    std::list<RecvMsg> m_vecRecvMsg;
 };
 
 

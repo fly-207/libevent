@@ -212,7 +212,7 @@ int CTCPServerManager::AddWebSocketInfo(int socketType, const char* addr, int po
 
 int CTCPServerManager::AddTcpConnectInfo(int socketType, const char* addr, int port)
 {
-	std::shared_ptr<TcpConnectInfo> _tmp = std::make_shared<TcpConnectInfo>();
+	std::shared_ptr<TcpClientInfo> _tmp = std::make_shared<TcpClientInfo>();
 	memcpy(_tmp->addr, addr, strlen(addr));
 	_tmp->port = port;
 	_tmp->socket_type = socketType;
@@ -366,11 +366,16 @@ CTCPServerManager::TcpListenCB(struct evconnlistener *listener,
     bufferevent_enable(bev, EV_WRITE | EV_READ);
 
 	pListenInfo->connectd_info[fd] = bev;
+
 }
 
 void
 CTCPServerManager::TcpReadCB(struct bufferevent *bev, void *data)
 {
+    int nSockInfoIndex = (int)data;
+    CTCPServerManager* pNetManager = CTCPServerManager::GetNetManager();
+    std::shared_ptr<TcpListenInfo> pListenInfo = pNetManager->m_vecTcpSocketInfo[nSockInfoIndex];
+
     char msg[1024] = {};
     bufferevent_read(bev, msg, sizeof(msg));
 
