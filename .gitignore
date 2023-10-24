@@ -177,3 +177,4 @@ test-server/x64/
 test-server/test-server.dir/Debug/
 test-multi-thread/x64/
 test-event/x64/
+.vs/

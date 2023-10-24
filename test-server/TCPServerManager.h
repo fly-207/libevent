@@ -14,6 +14,7 @@
 #include "evconfig-private.h"
 #include <map>
 #include <event2/ws.h>
+#include <event2/http.h>
 #include <list>
 struct bufferevent;
 
