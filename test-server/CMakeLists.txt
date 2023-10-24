@@ -9,6 +9,7 @@ add_executable(test-server ${SRC_LIST})
 target_link_libraries(test-server
 		  event_extra
 		  event_core
+		  event_pthreads
 		  ${LIB_APPS}
 		  ${LIB_PLATFORM})
 
