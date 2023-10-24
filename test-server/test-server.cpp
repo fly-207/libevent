@@ -2,8 +2,11 @@
 //
 
 #include "TCPServerManager.h"
-#ifdef _WIN32
 #include <event2/thread.h>
+
+#ifdef _WIN32
+#else
+#include <unistd.h>
 #endif /* _WIN32 */
 #include <event2/http.h>
 
@@ -75,7 +78,11 @@ main()
 
 	//a->Stop();
 
+#ifdef _WIN32
     Sleep(1000 * 3000);
+#else
+	sleep(1000*30000);
+#endif
 
 	return 0;
 }

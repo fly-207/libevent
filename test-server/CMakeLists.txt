@@ -12,6 +12,7 @@ target_link_libraries(test-server
 		  ${LIB_APPS}
 		  ${LIB_PLATFORM})
 
+target_compile_options(test-server PRIVATE -fpermissive)
 # OpenSSL::SSL
 message(STATUS "======================      ${LIB_APPS}")
 # ws2_32;shell32;advapi32;bcrypt

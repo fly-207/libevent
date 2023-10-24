@@ -8,8 +8,13 @@
 #include "event-internal.h"
 #include <event2/http.h>
 #include <event2/ws.h>
+#include <cstring>
 
-
+#ifndef _WIN32
+#include<sys/socket.h>
+#include<netinet/in.h>
+#include<arpa/inet.h>
+#endif
 
 CTCPServerManager::CTCPServerManager()
 {
