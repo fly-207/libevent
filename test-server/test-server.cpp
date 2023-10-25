@@ -69,7 +69,7 @@ main()
  //   HttpPathCallBack c2 = { "/cb2", cb2, 0 };
 	//a->AddHttpInfo("0.0.0.0", 50001, {c1 ,c2});
 
- //   a->AddWebSocketInfo(3, "0.0.0.0", 55000, "/ws");
+    a->AddWebSocketInfo(3, "0.0.0.0", 55000, "/ws", 10);
 
 	a->AddTcpConnectInfo(4, "127.0.0.1", 49980);
 	a->Start();

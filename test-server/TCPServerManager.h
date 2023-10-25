@@ -11,7 +11,7 @@
 #include <event2/util.h>
 #include <mutex>
 #include <string>
-#include "evconfig-private.h"
+//#include "evconfig-private.h"
 #include <map>
 #include <event2/ws.h>
 #include <event2/http.h>
