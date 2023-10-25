@@ -3,23 +3,26 @@ cmake_minimum_required(VERSION 3.10)
 project(test-server LANGUAGES CXX)
 
 
-file(GLOB SRC_LIST "*.cpp" "*.h")
+file(GLOB SRC_LIST "*.cpp" "*.h" "*.cc")
+message(STATUS "======================    SRC_LIST=${SRC_LIST}")
 add_executable(test-server ${SRC_LIST})
 
-
+# 不要使用 find_package, 有依赖库, 会形成一连串的问题
 #find_package(Libevent 2.2.1 REQUIRED)
 target_include_directories(test-server PRIVATE "/usr/local/include")
-target_link_libraries(test-server "event_core" "event_extra" "event_pthreads")
+
+# 库文件查找路径, 使用自定义路径时用到
+link_directories("/usr/local/lib")
+
+# 要是明确链接静态库 or 动态库, 就用 .a 或者 .so, 否则默认是 .so
+target_link_libraries(test-server "event_core.a" "event_extra.a" "event_pthreads.a" "pthread" "protobuf.a")
+
+# 动态库链接时用到, 增加程序动态库查找路径
 # export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib
 
-# target_link_libraries(test-server
-# 		  event_extra
-# 		  event_core
-# 		  event_pthreads
-# 		  ${LIB_APPS}
-# 		  ${LIB_PLATFORM})
-
+# 一些编译选项
 target_compile_options(test-server PRIVATE -fpermissive -std=c++11)
+
 # # OpenSSL::SSL
 # message(STATUS "======================      ${LIB_APPS}")
 # # ws2_32;shell32;advapi32;bcrypt

@@ -62,7 +62,11 @@ main()
     address_book.add_nums(2);
     address_book.add_nums(3);
 
-	std::string ss = address_book.SerializeToString();
+
+
+	std::string ss;
+	address_book.SerializeToString(&ss);
+	printf("%s\n", ss.c_str());
 
     ABCCD::AddressBook address_book_back;
 	address_book_back.ParseFromString(ss);
