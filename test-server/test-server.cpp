@@ -10,6 +10,8 @@
 #endif /* _WIN32 */
 #include <event2/http.h>
 
+#include "test.pb.h"
+
 // 服务器网络服务接口
 class ServerSocketHander : public IServerSocketHander {
 	/// 接口函数
@@ -53,6 +55,20 @@ main()
 	evthread_use_pthreads();
 
 #endif
+
+	ABCCD::AddressBook address_book;
+    address_book.set_flag(10);
+    address_book.add_nums(1);
+    address_book.add_nums(2);
+    address_book.add_nums(3);
+
+	std::string ss = address_book.SerializeToString();
+
+    ABCCD::AddressBook address_book_back;
+	address_book_back.ParseFromString(ss);
+
+	printf("%d\n", address_book_back.flag());
+
 
 	CTCPServerManager *a = CTCPServerManager::GetNetManager();
 

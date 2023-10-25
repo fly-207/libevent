@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+
+// 包名(命名空间)
+package ABCCD;
+
+// 通讯录地址簿列表
+message AddressBook {
+    int32 flag=1;
+    repeated int32 nums = 2;
+}
